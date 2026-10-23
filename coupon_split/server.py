@@ -190,7 +190,11 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def get_item_detail(store_code: str, product_code: str, elements: OrderElements | None = None) -> CallToolResult:
     """按需读取一个商品的官方规格/特制；未指定规格只用官方默认项。"""
-    e=normalize_elements(elements); context=order_context(get_store_context(token(),store_code),e,require_take=False) if e else {}
+    e=normalize_elements(elements)
+    if e and (not e.get('account_name') or not e.get('account_last4')):
+        account=(await account_info()).structuredContent
+        e.update(account_name=account['account_name'],account_last4=account['account_last4'])
+    context=order_context(get_store_context(token(),store_code),e,require_take=False) if e else {}
     detail=(await upstream.call(token(),'query-meal-detail',{'storeCode':store_code,'orderType':1,'beType':1,**context,'code':product_code}))['data']
     from coupon_split.presentation import food_name
     catalog=(await upstream.call(token(),'query-meals',{'storeCode':store_code,'orderType':1,'beType':1,**context}))['data']['meals']

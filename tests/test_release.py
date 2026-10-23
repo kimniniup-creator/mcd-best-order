@@ -125,3 +125,18 @@ async def test_new_authorization_is_recovered_without_server_restart(tmp_path,mo
         assert resumed['stage']=='ask' and '可以说' in resumed['display_markdown']
         assert 'session_id' in resumed
     finally:s.credential.reset(ctx)
+
+
+async def test_item_details_fill_account_without_asking_user(tmp_path,monkeypatch):
+    from coupon_split import server as s
+    from coupon_split.local import LocalState
+    class Details:
+        async def call(self,token,name,args):
+            if name=='query-my-account':return {'data':{'accountId':'fixture-xxxx'}}
+            if name=='query-meals':return {'data':{'meals':{'100':{'name':'虚构单品'}}}}
+            if name=='query-meal-detail':return {'data':{'code':'100','name':'虚构单品','rounds':[]}}
+            raise AssertionError(name)
+    monkeypatch.setattr(s,'upstream',Details());monkeypatch.setattr(s,'UPSTREAM_TOKEN','fixture')
+    monkeypatch.setattr(s,'memory',LocalState(tmp_path/'memory'))
+    result=await s.get_item_detail('fixture-store','100',{'fulfillment':'pickup'})
+    assert result.structuredContent['default_item']['productCode']=='100'
