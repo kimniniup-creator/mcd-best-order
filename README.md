@@ -94,7 +94,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 
 最后一步准备点餐服务，并仅为本插件设置报价和下单的允许弹窗。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单、撤回和支付状态查询都保留逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
 
-如果 Codex VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
+如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
 uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2/coupon_split-0.5.2-py3-none-any.whl coupon-split setup --host codex-ide --apply
@@ -127,7 +127,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 codex plugin remove mcd-best-order@mcd-best-order-marketplace
 ```
 
-然后重开 Codex，可以继续其他对话。补好 uv、重开终端后，再回到“Codex 安装”，依次执行全部三段命令。**第三段 `coupon-split setup --host codex-plugin --apply` 不能漏；漏掉它就没有每次下单时的允许弹窗设置。**通过 VS Code 里的 Codex 插件专用命令安装的版本，运行 `codex mcp remove coupon-split` 移除。
+然后重开 Codex，可以继续其他对话。补好 uv、重开终端后，再回到“Codex 安装”，依次执行全部三段命令。**第三段 `coupon-split setup --host codex-plugin --apply` 不能漏；漏掉它就没有每次下单时的允许弹窗设置。** 通过 VS Code 里的 Codex 插件专用命令安装的版本，运行 `codex mcp remove coupon-split` 移除。
 
 Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`，补好 uv 和网络后重新安装。不会自动替你安装软件。
 
