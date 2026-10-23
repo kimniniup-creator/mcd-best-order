@@ -15,14 +15,23 @@ def context_for(prompt):
     return {'hookSpecificOutput':{'hookEventName':'UserPromptSubmit','additionalContext':skill}}
 
 
+def transcript_file(name):
+    # Windows may receive a legitimate host transcript longer than MAX_PATH.
+    # Do not turn an unreadable transcript into repeated false link denials.
+    name=os.path.abspath(name)
+    if os.name=='nt' and not name.startswith('\\\\?\\'):
+        name='\\\\?\\UNC\\'+name[2:] if name.startswith('\\\\') else '\\\\?\\'+name
+    return Path(name)
+
+
 def turn_text(value):
     visible=[];all_text=[]
     try:
-        for line in Path(value.get('transcript_path','')).read_text(encoding='utf-8').splitlines():
+        for line in transcript_file(value.get('transcript_path','')).read_text(encoding='utf-8').splitlines():
             try:entry=json.loads(line)
             except ValueError:continue
             content=entry.get('message',{}).get('content',[])
-            if entry.get('type')=='user' and (isinstance(content,str) or any(b.get('type')=='text' for b in content if isinstance(b,dict))):
+            if entry.get('type')=='user' and not entry.get('isMeta') and (isinstance(content,str) or any(b.get('type')=='text' for b in content if isinstance(b,dict))):
                 visible=[];all_text=[]
             all_text.append(json.dumps(content,ensure_ascii=False))
             if entry.get('type')=='assistant' and isinstance(content,list):
