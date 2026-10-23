@@ -229,7 +229,7 @@ def markdown(plan):
             if p.get('buys_card'):rows += [f"买卡后本单比不买卡再省 {money(plan['no_card']['price']-p['price'])}。"]
         if plan.get('take_options'):
             rows += ['\n请选择取餐方式：'+'；'.join(str(i)+' '+(v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐') for i,v in enumerate(plan['take_options'],1))+'。']
-        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认** 下单，宿主还会弹出审批。']
+        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认** 下单，Claude Code/Codex 还会弹出允许请求。']
         if p['price']>20000:rows += [f"本单超过 ¥200，还需追加确认：**确认下单 ¥{p['price']/100:.2f}**。"]
         if not plan.get('real_orders_enabled'):rows += ['当前为模拟模式，不产生真实订单。']
         return '\n'.join(rows)

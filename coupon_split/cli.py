@@ -9,7 +9,7 @@ import tomllib
 import sys
 from pathlib import Path
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.1/coupon_split-0.5.1-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2/coupon_split-0.5.2-py3-none-any.whl'
 
 
 def configure_codex(plugin=True):
@@ -50,7 +50,7 @@ def configure_codex(plugin=True):
         else:text+='\n'+header+'\n'+setting
     tomllib.loads(text)
     path.write_text(text,encoding='utf-8')
-    print('已配置：报价自动通过；下单、撤回和支付状态工具请求宿主审批。')
+    print('已配置：报价自动通过；下单、撤回和支付状态工具请求Claude Code/Codex 允许弹窗。')
 
 
 def preflight():
@@ -110,7 +110,7 @@ def main():
     else:
         command=['claude','mcp','add','--scope','user','coupon-split','--','uvx','--from',SOURCE,'coupon-split-mcp']
         target=Path.home()/'.claude/skills/mcd-order/SKILL.md'
-    print('将写入本人宿主 MCP 配置，并安装 skill：',target)
+    print('将写入本人Claude Code/Codex MCP 配置，并安装 skill：',target)
     print(subprocess.list2cmdline(command))
     if not args.apply:
         print('尚未修改配置。确认这些改动后，添加 --apply 重新运行。')
@@ -120,7 +120,7 @@ def main():
     if target.exists() and target.read_bytes()!=source.read_bytes():
         raise SystemExit('已有不同版本 skill，保留原文件；请先自行核对版本。')
     executable=shutil.which(command[0])
-    if not executable:raise SystemExit('未找到宿主命令，请先安装宿主 CLI。')
+    if not executable:raise SystemExit('未找到Claude Code/Codex命令，请先安装Claude Code/Codex CLI。')
     if args.host=='codex-ide':
         launcher.parent.mkdir(parents=True,exist_ok=True)
         source_launcher=Path(__file__).parent/'assets/hooks/launch.sh'
@@ -148,4 +148,4 @@ def main():
         text=''.join(sections);tomllib.loads(text);path.write_text(text,encoding='utf-8')
         configure_codex(plugin=False)
         preflight()
-    print('完成。请新开宿主会话，说出想吃的餐品。')
+    print('完成。请新开Claude Code/Codex会话，说出想吃的餐品。')

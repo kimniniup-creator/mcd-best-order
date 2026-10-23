@@ -34,7 +34,7 @@ def startup_context():
 
 
 def context_for(prompt):
-    if not re.search(r'好了|选好了|点餐|麦当劳|想吃|要吃|外卖|外送|自取|堂食|外带|帮我配|自己点|取餐',prompt):return {}
+    if not re.search(r'好了|选好了|继续刚才|接着点刚才那个|点餐|麦当劳|想吃|要吃|外卖|外送|自取|堂食|外带|帮我配|自己点|取餐',prompt):return {}
     skill=(Path(__file__).resolve().parent.parent/'skills/mcd-order/SKILL.md').read_text(encoding='utf-8')
     return {'hookSpecificOutput':{'hookEventName':'UserPromptSubmit','additionalContext':skill}}
 

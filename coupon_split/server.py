@@ -51,7 +51,7 @@ active_credentials = {}  # memory only; local default is recovered on restart
 conversation_id = secrets.token_urlsafe(24)
 store_context = {}
 menu_context = {}
-mcp = FastMCP("最优下单", instructions="用户看不到工具结果。点餐页链接必须先原样写进用户可见的 assistant 正文，再调用 get_cart，禁止只有工具调用。任何点餐原话（包括只说单个餐品）都必须先调用 mcd_start(utterance=用户原话)，不能跳过起步直接查地址、菜单或报价。用户说了餐品就沿用 session 的 items，不再问推荐；仅补缺的方式和地点，不能擅选外送地址。每条后续点餐原话也先调用 mcd_start(utterance=完整原话)，服务端保留当前会话。用户说“好了”也调用 mcd_start 恢复购物车。严格依 next_tool、display_markdown、reply_options 继续。原样输出 display_markdown，不得改写或删行。先把 display_markdown 中含 [打开点餐页] 链接的整段话原样输出给用户，再调用 get_cart(wait=25) 轮询提交，自动报价；不输出英文元话或内部说明。报价后结束回合等明确确认，禁止自主下单；收到用户明确确认且宿主审批通过后才能下单。", stateless_http=True, json_response=True)
+mcp = FastMCP("最优下单", instructions="用户看不到工具结果。点餐页链接必须先原样写进用户可见的 assistant 正文，再调用 get_cart，禁止只有工具调用。开始或修改点餐（包括只说单个餐品）先调用 mcd_start(utterance=用户原话)，不能跳过起步直接查地址、菜单或报价。用户说了餐品就沿用 session 的 items，不再问推荐；仅补缺的方式和地点，不能擅选外送地址。报价后的确认必须直接调用 place_orders，绝不调用 mcd_start；其余后续点餐原话先调用 mcd_start(utterance=完整原话)，服务端保留当前会话。用户说“好了”也调用 mcd_start 恢复购物车。严格依 next_tool、display_markdown、reply_options 继续。原样输出 display_markdown，不得改写或删行。先把 display_markdown 中含 [打开点餐页] 链接的整段话原样输出给用户，再调用 get_cart(wait=25) 轮询提交，自动报价；不输出英文元话或内部说明。报价后结束回合等明确确认，禁止自主下单；收到用户明确确认且Claude Code/Codex 允许弹窗通过后才能下单。", stateless_http=True, json_response=True)
 
 
 def token():
@@ -287,7 +287,19 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     resolve_display_names(plan)
     service.save(plan)
     if pending and elements.get('fulfillment')=='drive':plan['take_options']=take_options
-    return result(quote_summary(plan),markdown(plan))
+    # Direct quotation and the browser path must leave the same resumable cart.
+    sid=state.get('active_session','')
+    if not active or active.get('owner')!=owner(t):
+        sid=secrets.token_urlsafe(24)
+        active={'owner':owner(t),'conversation_id':conversation_id,'plan':'我自己点'}
+    active.update(items=copy.deepcopy(items),elements=elements,store_code=store_code,
+        submitted=True,intent_resolved=True,item_summary=previous['item_summary'],pending_plan_id=plan['plan_id'])
+    carts[sid]=active
+    memory.write(owner(t),dict(previous,active_session=sid))
+    data=quote_summary(plan)
+    data.update(session_id=sid,confirmation_instruction='报价后结束本回合。用户下一条说“确认”或“确认下单 ¥金额”时，直接调用 place_orders；不要调用 mcd_start。',
+        next_arguments={'plan_id':plan['plan_id'],'confirm_token':plan['confirm_token']})
+    return result(data,markdown(plan))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
@@ -318,7 +330,7 @@ async def get_evidence(plan_id: str, evidence_id: str) -> CallToolResult:
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
 async def place_orders(plan_id: str, confirm_token: str, user_confirmation: str, option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "") -> CallToolResult:
-    """仅逐字收到用户明确确认且宿主审批通过后调用。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
+    """仅逐字收到用户明确确认且Claude Code/Codex 允许弹窗通过后调用。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t)
     import re
     if not re.search(r'确认|同意下单|就这样下单',user_confirmation) or re.search(r'不|别|不要|取消|撤回|先等',user_confirmation):
@@ -535,14 +547,14 @@ async def local_url():
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='仅传本对话前一轮工具返回的 session_id。新对话留空，不查询或猜测旧 ID。')] = "") -> CallToolResult:
-    """任意点餐原话的唯一入口，无需用 shell 读取 SKILL.md，完整协议由本工具返回。
+    """开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
 
     每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。
     按 next_tool 和 next_arguments 同回合继续，只追问 missing。
     原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，
     再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。
     收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。
-    报价完整展示后停等明确确认；place_orders 还须宿主审批，不得自主下单。
+    报价完整展示后停等明确确认；place_orders 还须Claude Code/Codex 允许弹窗，不得自主下单。
     缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。
     """
     import re
@@ -573,6 +585,14 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         memory.write('onboarding',{})
     t=token();state=memory.read(owner(t))
     existing=carts.get(state.get('active_session',''))
+    if re.fullmatch(r'(?:确认|确认下单(?:\s*[¥￥]?\s*\d+(?:\.\d{1,2})?)?)[。！!\s]*',utterance.strip()):
+        if existing and (existing.get('conversation_id')==conversation_id or session_id==state.get('active_session')) and existing.get('pending_plan_id'):
+            pending=service.load(existing['pending_plan_id'],t)
+            if pending['state']=='quoted':
+                data=quote_summary(pending)
+                data.update(session_id=state['active_session'],next_tool='place_orders',
+                    next_arguments={'plan_id':pending['plan_id'],'confirm_token':pending['confirm_token'],'user_confirmation':utterance})
+                return result(data,'请调用 place_orders，使用原报价凭证和本轮确认原话；不要重新开始点餐。')
     if (existing and existing.get('last_utterance')==utterance
             and (existing.get('conversation_id')==conversation_id or session_id==state.get('active_session'))
             and (plan is None or plan==existing.get('plan'))
@@ -591,7 +611,12 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     last_order=state.get('last_order',{})
     previous=copy.deepcopy(last_order)
     active=carts.get(state.get('active_session',''))
-    resume_requested=bool(re.search(r'照上次|照旧|继续刚才|接着用',utterance) or (utterance.strip().isdigit() and plan=='照上次那份'))
+    resume_requested=bool(re.search(r'照上次|照旧|继续刚才|接着点刚才那个|接着用',utterance) or (utterance.strip().isdigit() and plan=='照上次那份'))
+    # An empty new cart must not replace the last unfinished selection.
+    if resume_requested and not re.search(r'照上次|照旧',utterance) and (not active or not active.get('items')):
+        pending=carts.get(state.get('pending_session',''))
+        if pending and pending['owner']==owner(t) and pending.get('items'):
+            state['active_session']=state['pending_session'];active=pending
     continuing=bool(active and (active.get('conversation_id')==conversation_id or resume_requested or session_id==state.get('active_session'))
         and not re.search(r'重新点|新的一单|再下一单|照上次|照旧|(?:我要吃|帮我点个)麦当劳',utterance))
     if not continuing and not resume_requested:
@@ -646,6 +671,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         cart['intent']=active.get('intent','')
         cart['intent_resolved']=active.get('intent_resolved',False)
     carts[sid]=cart
+    if active and not continuing and active.get('items') and not resume_requested:
+        state['pending_session']=state['active_session']
     memory.write(owner(t),dict(state,active_session=sid))
     if plan=='照上次那份':cart['items']=copy.deepcopy(previous.get('items',[]))
     await resolve_cart_intent(cart,t)
@@ -729,9 +756,12 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         if cart['city']:data['next_arguments']['city']=cart['city']
         data['next_action']='立即调用 find_store：city 必须从用户给出的 location 中提取，keyword 用其余地标。不要传空 city，不要在“已收到你的选择”处结束回合。'
         text='正在查你附近的可用门店，接着打开点餐页。'
-    if active and not continuing and not resume_requested and active.get('items'):
-        data['pending_cart_notice']='上次有一份没下单的，要接着用吗？明确说“继续刚才”才恢复。'
-    data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待明确确认和宿主审批。全程中文，不对用户说英文元话。'
+    pending=carts.get(state.get('pending_session',''))
+    if pending and pending.get('items') and not resume_requested:
+        notice='上次有一份没下单的（'+pending.get('item_summary','、'.join(i['productCode']+' ×'+str(i['quantity']) for i in pending['items']))+'），要接着用吗？说“继续刚才”即可恢复。'
+        data['pending_cart_notice']=notice
+        text+='\n\n'+notice
+    data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待明确确认和Claude Code/Codex 允许弹窗。全程中文，不对用户说英文元话。'
     carts[sid]=cart
     response=result(data,text)
     if data.get('next_tool')=='find_store' and not missing:

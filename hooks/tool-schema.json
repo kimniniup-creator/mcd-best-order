@@ -708,7 +708,7 @@
   },
   {
     "name": "place_orders",
-    "description": "仅逐字收到用户明确确认且宿主审批通过后调用。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。",
+    "description": "仅逐字收到用户明确确认且Claude Code/Codex 允许弹窗通过后调用。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。",
     "inputSchema": {
       "properties": {
         "plan_id": {
@@ -999,7 +999,7 @@
   },
   {
     "name": "mcd_start",
-    "description": "任意点餐原话的唯一入口，无需用 shell 读取 SKILL.md，完整协议由本工具返回。\n\n每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。\n按 next_tool 和 next_arguments 同回合继续，只追问 missing。\n原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，\n再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。\n收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。\n报价完整展示后停等明确确认；place_orders 还须宿主审批，不得自主下单。\n缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。\n",
+    "description": "开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。\n\n每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。\n按 next_tool 和 next_arguments 同回合继续，只追问 missing。\n原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，\n再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。\n收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。\n报价完整展示后停等明确确认；place_orders 还须Claude Code/Codex 允许弹窗，不得自主下单。\n缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。\n",
     "inputSchema": {
       "properties": {
         "utterance": {
