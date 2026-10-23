@@ -9,7 +9,7 @@ import tomllib
 import sys
 from pathlib import Path
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2-r14-final/coupon_split-0.5.2-1-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.3/coupon_split-0.5.3-py3-none-any.whl'
 
 
 def configure_codex(plugin=True):
@@ -29,11 +29,12 @@ def configure_codex(plugin=True):
         original=''.join(blocks)
     prefix='plugins."mcd-best-order@mcd-best-order-marketplace".mcp_servers.coupon-split' if plugin else 'mcp_servers.coupon-split'
     policies={prefix:('default_tools_approval_mode','auto'),prefix+'.tools.quote_best':('approval_mode','approve')}
+    policies[prefix+'.tools.propose_cart']=('approval_mode','approve')
     for tool in ('place_orders','cancel_plan','pay_card'):
         policies[prefix+'.tools.'+tool]=('approval_mode','prompt')
     config=tomllib.loads(original)
     existing=(config.get('plugins',{}).get('mcd-best-order@mcd-best-order-marketplace',{}) if plugin else config).get('mcp_servers',{}).get('coupon-split',{})
-    if existing.get('default_tools_approval_mode')=='auto' and existing.get('tools',{}).get('quote_best',{}).get('approval_mode')=='approve' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan','pay_card')):
+    if existing.get('default_tools_approval_mode')=='auto' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='approve' for tool in ('quote_best','propose_cart')) and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan','pay_card')):
         if original!=before:path.write_text(original,encoding='utf-8')
         print('本插件报价与写操作审批策略已配置。')
         return

@@ -136,14 +136,20 @@ async def find_store(city: str, keyword: str = "", fulfillment: Literal['pickup'
                 data.update(picker_url=page, order_url=page, links={'picker_url':page}, next_tool='get_cart', wait=25, stage='pick')
                 text += f'\n[打开点餐页]({page}) — 选好点底部“选好了，去算最省”，选好会自动接着算；如果没接上，回来说一句“好了”。'
             elif cart.get('plan')=='帮我配':
-                data.update(next_tool='get_menu',recommend=True,people=cart.get('people') or 1)
+                data.update(next_tool='get_menu',recommend=True,people=cart.get('people') or 1,next_arguments={'store_code':cart['store_code'],'session_id':session_id,'recommend':True})
         carts[session_id]=cart
     return result(data,text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def get_menu(store_code: str, search: str = "", offset: int = 0, elements: OrderElements | None = None, people: int | None = None, recommend: bool = False, session_id: str = "") -> CallToolResult:
-    """浏览全菜单；套餐返回官方选配和特制字段，按原样提交，不推测杯型。"""
+    """浏览菜单。recommend=true 返回≤8KB宿主配餐上下文，不代配、不写购物车。
+    由你阅读分页和条件、配主推+备选，再调用 propose_cart，展示后等用户认可再核价。
+    """
+    if recommend:
+        from coupon_split.meal_planning import context
+        import sys
+        return await context(sys.modules[__name__],store_code,session_id,people,offset)
     t = token()
     cart = owned_cart(session_id) if session_id else None
     elements = normalize_elements(elements or (cart['elements'] if cart else {}))
@@ -155,16 +161,7 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
     menu = (await upstream.call(t,"query-meals",base))["data"]
     rows = menu_rows(menu)
     if search: rows = matches(search, rows)
-    recommended=[]
-    if recommend:
-        rows=[row for row, _ in recommend_rows(rows, people)]
     page=rows[max(0,offset):max(0,offset)+8]
-    for row in page:
-        if recommend:
-            detail=(await upstream.call(t,'query-meal-detail',dict(base,code=row['productCode'])))['data']
-            quantity=next(n for r,n in recommend_rows(rows,people) if r['productCode']==row['productCode'])
-            item=default_item(detail, quantity)
-            recommended.append({'name':row['name'],'item':item})
     selected=[]
     if cart:
         cart['store_code']=store_code
@@ -178,19 +175,32 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
             detail=(await upstream.call(t,'query-meal-detail',dict(base,code=item['productCode'])))['data']
             selected.append(default_item(detail,item['quantity']))
     compact=[{k:r[k] for k in ('productCode','name','price_yuan','category')} for r in page]
-    text=('按'+str(people or 1)+'个人配好了（来自这家店现在的菜单，都能改）：' if recommend else '这家店现在的菜单（也可以直接说餐品名称和数量）：')+'\n'+'\n'.join(f"{n} {r['name']}"+(f" ×{people or 1}" if recommend else '')+f"　¥{float(r['price_yuan']):.2f}" for n,r in enumerate(page,1))
-    if recommend: text+='\n回复 **1 就这样算**，或者说要改什么。'
-    if recommend:
-        active_sid=session_id or memory.read(owner(t)).get('active_session','')
-        active=carts.get(active_sid)
-        if active and active['owner']==owner(t):
-            active.update(items=[copy.deepcopy(row['item']) for row in recommended],recommendation_pending=True)
-    data={'items':compact,'recommended_items':recommended,'total':len(rows),'next_offset':offset+8 if offset+8<len(rows) else None,'selected_items':selected,'stage':'pick','next_tool':'quote_best' if selected or recommended else 'get_item_detail'}
+    text='这家店现在的菜单（也可以直接说餐品名称和数量）：\n'+'\n'.join(f"{n} {r['name']}　¥{float(r['price_yuan']):.2f}" for n,r in enumerate(page,1))
+    data={'items':compact,'total':len(rows),'next_offset':offset+8 if offset+8<len(rows) else None,'selected_items':selected,'stage':'pick','next_tool':'quote_best' if selected else 'get_item_detail'}
     # Variable-length menus/default rounds must never overflow the model's budget.
     while len(json.dumps(data,ensure_ascii=False).encode())+len(text.encode())*2>3700 and len(compact)>1:
         compact.pop();data['next_offset']=offset+len(compact)
         text='这家店现在的菜单（也可以直接说名称和数量）：\n'+'\n'.join(f"{n} {r['name']}　¥{float(r['price_yuan']):.2f}" for n,r in enumerate(compact,1))
     return result(data,text)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=True))
+async def propose_cart(session_id: str, options: list[dict]) -> CallToolResult:
+    """提交一个主推+一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。
+    校验菜单/时段/忌口/官方选配和照原样价；错误按原因重配。成功只更新本地购物车。
+    原样展示后停止等用户“就这样”“换备选”或修改；认可后 mcd_start → quote_best，禁止自主下单。
+    """
+    import sys
+    from coupon_split.meal_planning import propose
+    return await propose(sys.modules[__name__],session_id,options)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
+async def simple_recommend(store_code: str, people: int | None = None, elements: OrderElements | None = None) -> CallToolResult:
+    """仅网页无宿主模型时的简易规则推荐；对话请 get_menu(recommend=true) 后由宿主 propose_cart。"""
+    import sys
+    from coupon_split.meal_planning import simple
+    return await simple(sys.modules[__name__],store_code,people,elements)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
@@ -224,6 +234,8 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     explicit_mode=incoming.get('fulfillment')
     state=memory.read(owner(t))
     active=carts.get(state.get('active_session',''))
+    if active and active.get('recommendation_pending'):
+        raise ValueError('配餐方案尚未获用户认可；先展示主推和备选，等用户说“就这样”或“换备选”后调用 mcd_start，再核价')
     previous=state.get('elements',{})
     if active and active['owner']==owner(t):
         previous=active['elements']
@@ -546,7 +558,7 @@ async def local_url():
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
-async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='仅传本对话前一轮工具返回的 session_id。新对话留空，不查询或猜测旧 ID。')] = "") -> CallToolResult:
+async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。')] = "") -> CallToolResult:
     """开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
 
     每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。
@@ -603,9 +615,11 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if utterance.strip().strip('。！!') in {'好了','选好了'}:
         sid=state.get('active_session','')
         if sid and carts.get(sid):return await get_cart(sid,wait=0)
-    if utterance.replace(' ','').strip('。！!') in {'1就这样算','就这样算','按这个算'}:
+    if utterance.replace(' ','').strip('。！!') in {'1就这样算','就这样算','按这个算','就这样','换备选','用备选'}:
         sid=state.get('active_session','');active=carts.get(sid)
         if active and active.get('recommendation_pending'):
+            if '备选' in utterance and active.get('meal_options'):
+                active['items']=copy.deepcopy(active['meal_options'][1]['items'])
             active.update(submitted=True,recommendation_pending=False)
             return await get_cart(sid,wait=0)
     last_order=state.get('last_order',{})
@@ -660,12 +674,17 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         previous.pop('store_code',None)
     concrete=bool(intent_text(utterance)) and not intent_text(utterance).isdigit()
     if recommend is not None and plan is None:plan='帮我配' if recommend else '我自己点'
-    if '帮我配' in utterance or '帮我推荐' in utterance:plan='帮我配'
+    if any(w in utterance for w in ('帮我配','帮我推荐','推荐一下','随便来点')) or people_match or re.search(r'预算|不吃|忌口',utterance):plan='帮我配'
     elif re.search(r'照上次|照旧',utterance):plan='照上次那份'
     elif re.search(r'自己(?:来)?(?:点|选|看看菜单|看下菜单|看菜单)',utterance):plan='我自己点'
     elif concrete and plan is None:plan='我自己点'
+    if plan=='帮我配':concrete=False
     sid=state['active_session'] if continuing else secrets.token_urlsafe(24)
-    cart={'owner':owner(t),'conversation_id':conversation_id,'last_utterance':utterance,'items':[],'elements':e,'store_code':previous.get('store_code'),'submitted':False,'location':inferred.get('location',active.get('location','') if continuing else ''),'city':state.get('last_search',{}).get('city',''),'intent':utterance if concrete and plan!='帮我配' else '', 'plan':plan,'people':inferred.get('people')}
+    cart={'owner':owner(t),'conversation_id':conversation_id,'last_utterance':utterance,'items':[],'elements':e,'store_code':previous.get('store_code'),'submitted':False,'location':inferred.get('location',active.get('location','') if continuing else ''),'city':state.get('last_search',{}).get('city',''),'intent':utterance if concrete and plan!='帮我配' else '', 'plan':plan,'people':inferred.get('people',active.get('people') if continuing else None)}
+    cart['meal_requests']=(active.get('meal_requests',[]) if continuing else [])+[utterance]
+    if continuing and active.get('meal_options'):
+        cart['meal_options']=copy.deepcopy(active['meal_options'])
+        cart['previous_items']=copy.deepcopy(active.get('items',[]))
     if continuing and not concrete:
         cart['items']=copy.deepcopy(active.get('items',[]))
         cart['intent']=active.get('intent','')
@@ -741,7 +760,11 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         if cart['plan']=='照上次那份':cart['items']=copy.deepcopy(last_order.get('items',[]))
     data={'stage':'ask','question':question,'ui_mode':ui_mode,'form_response':form_response,'inferred':inferred,'inferred_sources':[{'key':k,'value':v,'source':e['sources'].get(k,'utterance')} for k,v in e.items() if k!='sources'],'missing':missing,'ask':{'message':question,'fields':list(fields)},'elements':e,'items':cart['items'],'store_code':cart['store_code'],'session_id':sid,'reuse_label':'沿用上次' if reused else '', 'last_order_summary':summary,'default_time':'立即（默认）','reply_options':reply_options,'next_tool':'find_store'}
     if inferred.get('people'):data['people']=inferred['people']
-    if cart['items'] and cart['store_code']:
+    if cart.get('plan')=='帮我配' and cart['store_code']:
+        cart['items']=[]
+        data.update(items=[],stage='pick',next_tool='get_menu',recommend=True,next_arguments={'store_code':cart['store_code'],'session_id':sid,'recommend':True})
+        text='按这家店现在的菜单，结合你的条件配主推和备选。'
+    elif cart['items'] and cart['store_code']:
         data.update(stage='pick',next_tool='quote_best');text='收到你点的餐品，正在核价。'
     elif cart.get('plan')=='帮我配' and cart['store_code']:
         data.update(stage='pick',next_tool='get_menu',recommend=True)
@@ -755,6 +778,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         data.update(next_tool='get_menu',reply_options=cart['intent_options']);text=cart['intent_question']
     if missing:
         data['next_tool']='mcd_start'
+        data['next_arguments']={'session_id':sid}
     elif data['next_tool']=='find_store':
         data['next_arguments']={'keyword':cart['location'],
             'fulfillment':e['fulfillment'],'session_id':sid}
@@ -769,6 +793,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待明确确认和Claude Code/Codex 允许弹窗。全程中文，不对用户说英文元话。'
     carts[sid]=cart
     response=result(data,text)
+    response.content.insert(0,TextContent(type='text',text='宿主执行指令：本回合按 next_tool 继续；需要等用户补充时停止。下一条用户消息调用 mcd_start 必须带 session_id='+sid+'，utterance 只传下一条原话。不可省略 session_id；人数/预算/忌口由本会话自动保留。'))
     if data.get('next_tool')=='find_store' and not missing:
         response.content.insert(0,TextContent(type='text',text=data['next_action']+' location='+cart['location']))
     return response

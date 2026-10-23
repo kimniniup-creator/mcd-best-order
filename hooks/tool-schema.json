@@ -76,7 +76,7 @@
   },
   {
     "name": "get_menu",
-    "description": "浏览全菜单；套餐返回官方选配和特制字段，按原样提交，不推测杯型。",
+    "description": "浏览菜单。recommend=true 返回≤8KB宿主配餐上下文，不代配、不写购物车。\n由你阅读分页和条件、配主推+备选，再调用 propose_cart，展示后等用户认可再核价。\n",
     "inputSchema": {
       "$defs": {
         "OrderElements": {
@@ -267,6 +267,220 @@
         "store_code"
       ],
       "title": "get_menuArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "propose_cart",
+    "description": "提交一个主推+一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。\n校验菜单/时段/忌口/官方选配和照原样价；错误按原因重配。成功只更新本地购物车。\n原样展示后停止等用户“就这样”“换备选”或修改；认可后 mcd_start → quote_best，禁止自主下单。\n",
+    "inputSchema": {
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Options",
+          "type": "array"
+        }
+      },
+      "required": [
+        "session_id",
+        "options"
+      ],
+      "title": "propose_cartArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "simple_recommend",
+    "description": "仅网页无宿主模型时的简易规则推荐；对话请 get_menu(recommend=true) 后由宿主 propose_cart。",
+    "inputSchema": {
+      "$defs": {
+        "OrderElements": {
+          "additionalProperties": false,
+          "properties": {
+            "fulfillment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pickup",
+                    "drive",
+                    "delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fulfillment"
+            },
+            "account_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Name"
+            },
+            "account_last4": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Last4"
+            },
+            "addressId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Addressid"
+            },
+            "delivery_address": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Delivery Address"
+            },
+            "takeWayCode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewaycode"
+            },
+            "takeWayName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewayname"
+            },
+            "reservationDate": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reservationdate"
+            },
+            "needTableware": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Needtableware"
+            },
+            "sources": {
+              "additionalProperties": {
+                "enum": [
+                  "utterance",
+                  "last",
+                  "default",
+                  "account",
+                  "nearest"
+                ],
+                "type": "string"
+              },
+              "title": "Sources",
+              "type": "object"
+            }
+          },
+          "title": "OrderElements",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "store_code": {
+          "title": "Store Code",
+          "type": "string"
+        },
+        "people": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "People"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderElements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "store_code"
+      ],
+      "title": "simple_recommendArguments",
       "type": "object"
     },
     "annotations": {
@@ -1038,7 +1252,7 @@
         },
         "session_id": {
           "default": "",
-          "description": "仅传本对话前一轮工具返回的 session_id。新对话留空，不查询或猜测旧 ID。",
+          "description": "同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。",
           "title": "Session Id",
           "type": "string"
         }

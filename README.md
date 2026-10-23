@@ -67,12 +67,21 @@ claude  # 用 Codex 的人改为 codex
 
 ## Claude Code 安装
 
-在 Claude Code 对话里依次执行这两行，然后新开对话：
+在 Claude Code 对话里分两次输入以下命令，每次只粘贴一行并回车，等第一行执行完成后再输入第二行。不要两行一起粘贴。
+
+第 1 步，添加插件市场：
 
 ```text
 /plugin marketplace add kimniniup-creator/mcd-best-order
+```
+
+第 2 步，安装插件：
+
+```text
 /plugin install mcd-best-order@mcd-best-order-marketplace
 ```
+
+两步都完成后，新开对话。
 
 第一次使用若弹出插件 hooks（自动检查）信任提示，核对插件名为 mcd-best-order 后点“信任/允许”。它会核对下单前最后一条用户消息。下单时仍需在允许弹窗里点允许，不要开启全部允许。首次启动正在准备时，稍候再说一次原话；持续失败请检查 uv 和网络。
 
@@ -89,7 +98,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2-r14-final/coupon_split-0.5.2-1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.3/coupon_split-0.5.3-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件设置报价和下单的允许弹窗。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单、撤回和支付状态查询都保留逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -97,7 +106,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2-r14-final/coupon_split-0.5.2-1-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.3/coupon_split-0.5.3-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -107,7 +116,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 3. 回本机授权页粘贴，点“保存到这台电脑”。**不要把 Token 发进聊天**。
 4. 回对话说“好了”。在点餐页选好，点“选好了，去算最省”，助手自动接着报价。
 
-也可以直接说“来份麦辣鸡腿堡，到店自取，外带，在北京望京中街附近”，或说“帮我配”。时间默认现在取；预约时请说清日期和钟点。外送只能选账户里已有的地址。
+也可以直接说“来份麦辣鸡腿堡，到店自取，外带，在北京望京中街附近”，或说“帮我配，3个人，一个不吃辣”“两个人，预算60”。宿主会从当前菜单配主推和备选，展示理由及照原样价；回复“就这样”或“换备选”后再算最省价，也可以继续改口味。网页开关只提供简易推荐。推荐使用你自己的 Claude Code/Codex，不需要额外的模型 API key。时间默认现在取；预约时请说清日期和钟点。外送只能选账户里已有的地址。
 
 凭据保存在本机系统凭据管理器；macOS 是钥匙串。其他系统无法使用钥匙串时，会提示仅本人可读的文件位置。凭据不交给作者、不进入聊天或产品日志。失效后按新授权页重新保存。
 
@@ -133,14 +142,14 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.5.2 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.5.2-r14-final)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.5.3 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.5.3)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2-r14-final/coupon_split-0.5.2-1-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.3/coupon_split-0.5.3-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。

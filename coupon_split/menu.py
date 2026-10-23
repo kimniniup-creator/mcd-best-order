@@ -12,7 +12,7 @@ def menu_rows(menu):
     return [dict(productCode=str(code), name=m.get('name', m.get('productName', code)),
                  price_yuan=str(m.get('currentPrice', '')), was_yuan=str(m.get('originalPrice', '')),
                  image=m.get('image', ''), category=categories.get(str(code), '其他餐品'),
-                 **{k:m[k] for k in ('aliases', 'alias', 'sales', 'salesVolume', 'description') if k in m})
+                 **{k:m[k] for k in ('aliases', 'alias', 'sales', 'salesVolume', 'description', 'available', 'isSelling', 'onSale', 'spicy', 'isSpicy', 'portion', 'servingSize', 'allergens', 'servingsByRole') if k in m})
             for code, m in menu['meals'].items()]
 
 
@@ -97,28 +97,5 @@ def default_item(detail, quantity=1):
 
 
 def recommend_rows(rows, people=None):
-    count = people or 1
-    if not 1 <= count <= 12: raise ValueError('人数范围 1–12')
-    # Prefer current sales within each official category, then current value.
-    groups = {}
-    for row in rows:
-        groups.setdefault(row['category'], []).append(row)
-    def rank(row):
-        try: price = Decimal(row.get('price_yuan') or '9999')
-        except Exception: price = Decimal('9999')
-        return (-int(row.get('salesVolume', row.get('sales', 0)) or 0), price, row['productCode'])
-    selected=[]
-    # Category roles come from this store's catalogue, never fixed product names.
-    for role in (r'汉堡|主食|饭|卷|堡',r'小食|配餐|薯|鸡块',r'饮料|饮品|咖啡|茶'):
-        candidates=[r for category,group in groups.items() if re.search(role,category) for r in group if not re.search(r'套餐|件套|分享|组合',r['name']) and r not in selected]
-        if candidates:
-            if '小食' in role:
-                savory=[r for r in candidates if re.search(r'薯|鸡|玉米|咸|肉',r['name']) and not re.search(r'甜|冰|蛋糕|圆筒',r['name'])]
-                selected.append(min(savory or candidates,key=rank))
-            elif '饮料' in role and not any(int(r.get('salesVolume',r.get('sales',0)) or 0) for r in candidates):
-                # With no sales signal, choose a normal mid-priced drink instead
-                # of always reducing the meal to the cheapest bottled option.
-                ordered=sorted(candidates,key=rank);selected.append(ordered[len(ordered)//2])
-            else:selected.append(min(candidates,key=rank))
-    if not selected and rows:selected=[min(rows,key=rank)]
-    return [(row,count) for row in selected]
+    from coupon_split.recommendation import fallback
+    return fallback(rows, people)
