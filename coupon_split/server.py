@@ -676,9 +676,9 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         client=getattr(getattr(ctx.session,'client_params',None),'clientInfo',None)
         if 'claude' in str(getattr(client,'name','')).lower():
             cart['skill_requested']=True
-            data.update(next_tool='Skill',skill='coupon-split:mcd-order',
+            data.update(next_tool='Skill',skill='mcd-best-order:mcd-order',
                 after_skill_tool=data.get('next_tool'),
-                next_action='先调用 Skill(skill="coupon-split:mcd-order") 读取已安装的点餐技能，然后按本结果继续。')
+                next_action='先调用 Skill(skill="mcd-best-order:mcd-order") 读取已安装的点餐技能，然后按本结果继续。')
     carts[sid]=cart
     return result(data,text)
 
