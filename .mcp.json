@@ -3,6 +3,8 @@
     "coupon-split": {
       "command": "uvx",
       "args": [
+        "--python",
+        "3.14",
         "--from",
         "https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl",
         "coupon-split-mcp"

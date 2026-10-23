@@ -10,7 +10,11 @@ from coupon_split.server import mcp, close_bridge
 def main():
     async def run():
         ready=state_dir()/'mcp-ready.json'
-        ready.write_text(json.dumps({'pid':os.getpid(),'started':time.time()}),encoding='utf-8')
+        @mcp._mcp_server.list_tools()
+        async def tools_ready():
+            tools=await mcp.list_tools()
+            ready.write_text(json.dumps({'pid':os.getpid(),'started':time.time(),'phase':'tools_listed'}),encoding='utf-8')
+            return tools
         try:
             await mcp.run_stdio_async()
         finally:

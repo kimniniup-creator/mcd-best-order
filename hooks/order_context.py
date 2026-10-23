@@ -7,6 +7,29 @@ from pathlib import Path
 import re
 import sys
 import os
+import time
+
+
+def wait_for_host_mcp(timeout=60):
+    """Stdlib-only hook: wait for the host's own tools/list handshake."""
+    started=time.time()
+    path=Path(os.environ.get('COUPON_SPLIT_HOME',Path.home()/'.coupon-split'))/'mcp-ready.json'
+    until=time.monotonic()+timeout
+    while True:
+        try:
+            value=json.loads(path.read_text(encoding='utf-8'))
+            if value.get('phase')=='tools_listed' and value.get('started',0)>=started-3:
+                time.sleep(.02)
+                return True
+        except (OSError,ValueError):pass
+        if time.monotonic()>=until:return False
+        time.sleep(.01)
+
+
+def startup_context():
+    ready=wait_for_host_mcp()
+    message=('点餐进程已就绪，等待宿主工具连接。' if ready else '服务启动中，请稍候再说一次。')+'工具可用后直接调用 mcd_start，按返回协议继续；全程中文，无需 shell 读取 SKILL.md。工具尚未出现时说“服务启动中，请稍候再说一次”；不要编造已连接或报价。'
+    return {'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':message}}
 
 
 def context_for(prompt):
@@ -87,5 +110,5 @@ def handle(value):
 
 if __name__=='__main__':
     sys.stdin.reconfigure(encoding='utf-8');sys.stdout.reconfigure(encoding='utf-8')
-    value=handle(json.load(sys.stdin))
+    value=startup_context() if sys.argv[1:]==['startup'] else handle(json.load(sys.stdin))
     print(json.dumps(value,ensure_ascii=False))

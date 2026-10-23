@@ -7,24 +7,9 @@ import json
 import re
 import tomllib
 import sys
-import time
 from pathlib import Path
 
 SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl'
-
-
-def wait_for_host_mcp(timeout=60):
-    """Wait for the host's own process, without importing/launching another MCP."""
-    started=time.time()
-    path=Path(os.environ.get('COUPON_SPLIT_HOME',Path.home()/'.coupon-split'))/'mcp-ready.json'
-    until=time.monotonic()+timeout
-    while True:
-        try:
-            if json.loads(path.read_text(encoding='utf-8')).get('started',0)>=started-3:
-                return True
-        except (OSError,ValueError):pass
-        if time.monotonic()>=until:return False
-        time.sleep(.05)
 
 
 def configure_codex():
@@ -78,17 +63,10 @@ def preflight():
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('action',choices=['setup','doctor','startup','forget-credential'])
+    parser.add_argument('action',choices=['setup','doctor','forget-credential'])
     parser.add_argument('--host',choices=['codex-ide','codex-plugin','claude-code'])
     parser.add_argument('--apply',action='store_true',help='明确同意写入 MCP 配置和用户 skill')
     args=parser.parse_args()
-    if args.action=='startup':
-        # The host starts its own MCP in parallel. A second initialize here
-        # doubles import work and delays every warm conversation by seconds.
-        ready=wait_for_host_mcp()
-        message=('点餐进程已就绪，等待宿主工具连接。' if ready else '服务启动中，请稍候再说一次。')+'工具可用后直接调用 mcd_start，按返回协议继续；全程中文，无需 shell 读取 SKILL.md。工具尚未出现时说“服务启动中，请稍候再说一次”；不要编造已连接或报价。'
-        print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':message}},ensure_ascii=False))
-        return
     if args.action=='doctor':
         preflight()
         return
@@ -112,7 +90,7 @@ def main():
     if args.host=='claude-code':
         raise SystemExit('Claude 请用插件安装：/plugin marketplace add kimniniup-creator/mcd-best-order，然后 /plugin install mcd-best-order@mcd-best-order-marketplace')
     if args.host=='codex-ide':
-        command=['codex','mcp','add','coupon-split','--','uvx','--from',SOURCE,'coupon-split-mcp']
+        command=['codex','mcp','add','coupon-split','--','uvx','--python','3.14','--from',SOURCE,'coupon-split-mcp']
         target=Path.home()/'.agents/skills/mcd-order/SKILL.md'
     else:
         command=['claude','mcp','add','--scope','user','coupon-split','--','uvx','--from',SOURCE,'coupon-split-mcp']
