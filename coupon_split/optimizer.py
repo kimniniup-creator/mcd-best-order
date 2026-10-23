@@ -172,13 +172,19 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     parsed = parse_cart(items)
     plain = copy.deepcopy(items) if items and isinstance(items[0],dict) else [atom(c,n) for c,n in parsed.items()]
     need = coverage(plain)
-    residual_rows={}
+    # A host-proposed package expresses food demand, not a purchase strategy.
+    # Retain the original package as the official baseline; search its exact leaves.
+    residual_rows={};mixed_modifications=False
     for row in plain:
-        cv=coverage([dict(row,quantity=1)])
-        if len(cv)==1 and next(iter(cv.values()))==1:
-            residual_rows[next(iter(cv))]=dict(row,quantity=1)
-    if set(residual_rows)!=set(need) or any('modification' in key(row) for row in plain):
-        allow_combos=False
+        children=[c for r in row.get('roundList',[]) for c in r['comboItemList']]
+        for child in children or [dict(code=row['productCode'])]:
+            leaf=atom(child['code'])
+            mod=child.get('modification',row.get('modification'))
+            if mod:leaf['modification']=copy.deepcopy(mod)
+            if str(child['code']) in residual_rows and composition_key(residual_rows[str(child['code'])])!=composition_key(leaf):mixed_modifications=True
+            residual_rows[str(child['code'])]=leaf
+    # Keep mixed modifications of the same leaf separate; don't collapse them.
+    if mixed_modifications:allow_combos=False
     def residual(left):
         return [dict(copy.deepcopy(residual_rows[c]),quantity=n) for c,n in left.items()]
     base = {"storeCode": store, "beType": 1, "orderType": 1, **(context or {})}
@@ -205,6 +211,11 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
                 if c.get('name') and not str(c['name']).isdigit():names[str(c['code'])]=c['name']
     excluded = [{"code": d.get("code"), "reason": "不同商品码且未取得一致的官方规格，排除未核实替换"} for d in details if not variants(d, need)]
     options = [v for d in details for v in variants(d, need)] if allow_combos else []
+    for v in options:
+        for r in v.get('roundList',[]):
+            for c in r['comboItemList']:
+                mod=residual_rows.get(str(c['code']),{}).get('modification')
+                if mod:c['modification']=copy.deepcopy(mod)
     detail_map={str(d['code']):d for d in details}
     def estimate(comp,card=False):
         total=Decimal(0)
@@ -224,6 +235,8 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
         return total
 
     compositions = [plain]
+    singles=residual(need)
+    if allow_combos and composition_key(singles)!=composition_key(plain):compositions.append(singles)
     # Bounded beam: grow combinations of exact-content packages and fill residuals with singles.
     frontier = [([], need)]
     for _ in range(4):
@@ -245,7 +258,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     candidates = []
     def add(orders, label, estimate=0):
         joined = [i for o in orders for i in o["items"]]
-        if coverage(joined) != need:
+        if coverage(joined) != need or specification_coverage(joined)!=specification_coverage(plain):
             return
         ids = [i["couponId"] for i in joined if i.get("couponId")]
         if len(ids) != len(set(ids)) or any(sum(bool(i.get("couponId")) for i in o["items"]) > 1 for o in orders):
@@ -254,7 +267,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     add([dict(base, items=plain)], "原样一单直下", -10000)
     for comp in compositions:
         est = estimate(comp)
-        add([dict(base, items=comp)], "套餐重组" if comp != plain else "单点", est)
+        add([dict(base, items=comp)], "套餐重组" if any(i.get("roundList") for i in comp) else "单点", est)
         cards = [menu.get(i["productCode"], {}).get("withOrder") for i in comp]
         with_order = None
         for card in [c for c in cards if c]:
@@ -291,7 +304,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     competitors=list(unique.values())
     priority=[c for c in competitors if c['label']=='原样一单直下']
     # Reserve exploration for every strategy before cheap-looking packages fill the budget.
-    for label in ('先买卡再省','买卡 + 一张券','套餐 / 单点 + 一张券','套餐重组','拆单用券'):
+    for label in ('先买卡再省','买卡 + 一张券','套餐 / 单点 + 一张券','套餐重组','单点','拆单用券'):
         priority += [c for c in competitors if c['label']==label][:3]
     chosen, calls = [], set()
     for c in priority+competitors:
@@ -354,7 +367,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
         if any(isinstance(r, Exception) for r in results):
             rejected.append({"label":c["label"],"reason":"；".join(str(r) for r in results if isinstance(r,Exception))})
             return None
-        return {"label": c["label"], "orders": results, "price": sum(r["price"] for r in results), "buys_card": any(o.get("withOrder") for o in c["orders"])}
+        return {"label": c["label"], "strategy":c['label'], "orders": results, "price": sum(r["price"] for r in results), "buys_card": any(o.get("withOrder") for o in c["orders"])}
     evaluated = [p for p in await asyncio.gather(*(evaluate(c) for c in chosen)) if p]
     baseline = next((p for p in evaluated if p["label"] == "原样一单直下"), None)
     if baseline is None:
@@ -375,4 +388,13 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     for i, p in enumerate(ranked):
         actual = coverage([r for o in p["orders"] for r in o["request"]["items"]])
         p.update(option_id=str(i), savings=baseline["price"]-p["price"], coverage=dict(actual), extras=dict(actual-need))
-    return {"baseline": baseline["price"], "baseline_evidence_id": baseline["orders"][0]["evidence_id"], "plans": ranked, "no_card": next((p for p in ranked if not p["buys_card"]), None), "compared": len(ranked), "evaluated":len(evaluated), "rejected": len(rejected), "exclusions":excluded+rejected, "price_calls": len(cache), "evidence": traces, "storeCode": store, "cart": dict(need), "names":names, "search_limit": MAX_CALLS, "elapsed_seconds":round(time.monotonic()-started,3)}
+    strategies={}
+    for p in evaluated:
+        label=p['strategy']
+        if label not in strategies or p['price']<strategies[label]['price']:
+            strategies[label]=dict(strategy=label,price=p['price'],difference=p['price']-ranked[0]['price'],evidence_ids=[o['evidence_id'] for o in p['orders']])
+    comparison=dict(options=list(strategies.values()),selected_strategy=ranked[0]['strategy'],selected_price=ranked[0]['price'],
+        explanation='在已按官方计价核验且内容规格完全一致的候选中，选择最低总价；同价优先少付几笔。',
+        scope='有界搜索，不承诺穷尽所有买法；无法核价的候选未作价格结论。')
+    comparison['text']='｜'.join(p['strategy']+' ¥'+f"{p['price']/100:.2f}" for p in comparison['options'])+' → 选了'+comparison['selected_strategy']+'，'+comparison['explanation']
+    return {"comparison_summary":comparison,"baseline": baseline["price"], "baseline_evidence_id": baseline["orders"][0]["evidence_id"], "plans": ranked, "no_card": next((p for p in ranked if not p["buys_card"]), None), "compared": len(ranked), "evaluated":len(evaluated), "rejected": len(rejected), "exclusions":excluded+rejected, "price_calls": len(cache), "evidence": traces, "storeCode": store, "cart": dict(need), "names":names, "search_limit": MAX_CALLS, "elapsed_seconds":round(time.monotonic()-started,3)}

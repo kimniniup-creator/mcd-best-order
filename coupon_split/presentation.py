@@ -95,7 +95,7 @@ def quote_summary(plan, option_id="0"):
             delivery_fee_yuan=None if o.get('deliveryPrice') is None else f"{o['deliveryPrice']/100:.2f}",packing_fee_yuan=None if o.get('packingPrice') is None else f"{o['packingPrice']/100:.2f}",
             packing_note='已免' if o.get('packing_waived') else '本单无打包费' if o.get('packingPrice')==0 else '',
             coupon='；'.join(o.get('coupons',[])) or '不用',subtotal_yuan=f"{o['price']/100:.2f}"))
-    result.update(stage='quote',price=p['price'],savings=p['savings'],order_count=n,payment_count=n,orders_count=n,payments_count=n,payments_note=f'需依次支付 {n} 笔' if n>1 else '付 1 次',
+    result.update(comparison_summary=plan.get('comparison_summary',{}),stage='quote',price=p['price'],savings=p['savings'],order_count=n,payment_count=n,orders_count=n,payments_count=n,payments_note=f'需依次支付 {n} 笔' if n>1 else '付 1 次',
         headline=(f"帮你省 {money(p['savings'])}：照原样 {money(plan['baseline'])} → 实付 {money(p['price'])}" if p['savings'] else f"这单已是最低价 {money(p['price'])}"),
         save_yuan=f"{p['savings']/100:.2f}",baseline_yuan=f"{plan['baseline']/100:.2f}",pay_yuan=f"{p['price']/100:.2f}",
         card_fee=sum(r['subtotal'] for o in p['orders'] for r in o['productList'] if r['productCode']=='521234'),
@@ -119,7 +119,7 @@ def official_payment_url(value):
 def public(plan):
     result = copy.deepcopy(plan)
     result.pop("owner", None)
-    for field in ["evidence","names","before_order_ids","pending_requests"]:
+    for field in ["evidence","names","before_order_ids","pending_requests","payment_key"]:
         result.pop(field,None)
     if result.get("state") not in {None,"quoted"}:
         for field in ["plans","no_card","confirm_token"]:
@@ -146,11 +146,11 @@ def public(plan):
                 order["payment_error"] = "非预期官方支付地址，禁止跳转"
                 continue
             buffer=io.BytesIO()
-            qrcode.make(value,image_factory=qrcode.image.svg.SvgPathImage).save(buffer)
-            order["qr_svg"]=buffer.getvalue().decode()
             oid=parse_qs(url.query).get("orderId",[])
             if len(oid)==1:
                 order["mobilePayUrl"]="https://m.mcd.cn/mcp/jumpToApp/?"+urlencode({"orderId":oid[0]})
+                qrcode.make(order["mobilePayUrl"],image_factory=qrcode.image.svg.SvgPathImage).save(buffer)
+                order["qr_svg"]=buffer.getvalue().decode()
     return result
 
 
@@ -232,6 +232,7 @@ def markdown(plan):
         else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认** 下单，Claude Code/Codex 还会弹出允许请求。']
         if p['price']>20000:rows += [f"本单超过 ¥200，还需追加确认：**确认下单 ¥{p['price']/100:.2f}**。"]
         if not plan.get('real_orders_enabled'):rows += ['当前为模拟模式，不产生真实订单。']
+        if plan.get('comparison_summary'):rows += ['\n比较摘要：'+plan['comparison_summary']['text']+'\n'+plan['comparison_summary']['scope']]
         return '\n'.join(rows)
     if plan.get("dry_run"):
         n=len(plan["orders"])
@@ -243,6 +244,6 @@ def markdown(plan):
     rows = [f"订单状态：{state}。需依次支付 {len(plan['orders'])} 笔。"]
     for i,o in enumerate(plan["orders"],1):
         payment=public({'orders':[o]})['orders'][0]
-        link = f"[官方支付页]({o['payH5Url']}) · [手机打开麦当劳 App]({payment['mobilePayUrl']})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
+        link = f"[打开付款页]({plan.get('payment_url','')}) · [手机打开麦当劳 App 付款]({payment['mobilePayUrl']})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
         rows.append(f"单 {i}｜{money(o['price'])}｜{o['orderStatus']}｜{link}｜{o['expirePayTime']} 前付款。")
-    return "\n\n".join(rows)+"\n\n请在15分钟内付款。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’；取消成功后，券退回仍需核验。"
+    return "\n\n".join(rows)+"\n\n请在15分钟内付款。必须安装麦当劳 App。电脑请打开付款页，用手机麦当劳 App 扫一扫（推荐），也可用微信扫一扫；手机可直接打开 App。也可在 App → 我的订单中查找本单（此入口待实测）。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’。"

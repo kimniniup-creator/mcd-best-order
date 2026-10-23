@@ -995,6 +995,36 @@
     }
   },
   {
+    "name": "wait_payment",
+    "description": "先原样输出付款卡，再每轮等待最多60秒；每3秒查状态。还没付款时继续调用，临期自动撤回。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "timeout": {
+          "default": 60,
+          "maximum": 60,
+          "minimum": 0,
+          "title": "Timeout",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_id"
+      ],
+      "title": "wait_paymentArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
     "name": "cancel_plan",
     "description": "放弃方案或撤回待付订单；只取消当前账户自己的方案。",
     "inputSchema": {

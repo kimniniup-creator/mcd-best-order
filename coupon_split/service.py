@@ -84,7 +84,7 @@ class Service:
                 self.quoting_accounts.discard(owner(token))
             plan.update(upstream_calls=getattr(self.upstream,"network_calls",0)-calls,cache_hits=getattr(self.upstream,"cache_hits",0)-hits)
             self.quote_seconds[owner(token)] = time.monotonic() - started
-        plan.update(plan_id=uuid.uuid4().hex, owner=owner(token), confirm_token=secrets.token_urlsafe(32), created=time.time(), state="quoted", orders=[], real_orders_enabled=self.upstream.allow_real, requested_items=copy.deepcopy(items))
+        plan.update(plan_id=uuid.uuid4().hex, payment_key=secrets.token_urlsafe(32), owner=owner(token), confirm_token=secrets.token_urlsafe(32), created=time.time(), state="quoted", orders=[], real_orders_enabled=self.upstream.allow_real, requested_items=copy.deepcopy(items))
         self.save(plan)
         return plan
 
@@ -270,15 +270,25 @@ class Service:
             if not plan["dry_run"]:
                 for order in plan["orders"]:
                     current = (await self.upstream.call(token, "query-order", {"orderId": order["orderId"]}))["data"]
-                    order.update({k:current[k] for k in ["status", "orderStatus"] if k in current})
+                    order.update({k:current[k] for k in ["status", "orderStatus", "takeCode", "pickupCode", "orderCode", "mealCode", "expirePayTime"] if k in current})
             if plan["state"] == "rollback_pending" or any(deadline(o["expirePayTime"]) <= time.time()+60 and str(o.get("status")) == "10" for o in plan["orders"]):
+                for o in plan['orders']:
+                    if str(o.get('status'))=='10' and deadline(o['expirePayTime'])<=time.time()+60:o['auto_expired']=True
                 return await self._cancel(token, plan)
             if plan["orders"] and all(str(o.get("status")) not in {"10", "60"} for o in plan["orders"]):
-                # Upstream uses localized orderStatus; do not infer payment from an unknown status.
-                if all("已支付" in o.get("orderStatus", "") or "配餐" in o.get("orderStatus", "") for o in plan["orders"]):
-                    plan["state"] = "paid"
+                plan["state"] = "paid"
+            elif plan['orders'] and all(str(o.get('status'))=='60' for o in plan['orders']):
+                plan['state']='cancelled'
             self.save(plan)
             return plan
+
+    async def wait_payment(self, token, plan_id, timeout=60):
+        until=time.monotonic()+max(0,min(60,float(timeout)))
+        while True:
+            plan=await self.status(token,plan_id)
+            if plan['state']!='awaiting_payment' or time.monotonic()>=until:
+                return plan
+            await asyncio.sleep(min(3,max(0,until-time.monotonic())))
 
 
 def deadline(value):

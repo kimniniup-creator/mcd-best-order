@@ -365,13 +365,18 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: str,
     for order in selected['orders']:
         await validate_selected(t,plan['storeCode'],order['request']['items'],order['request'],fill_defaults=False)
     plan = await service.place(t,plan_id,confirm_token,option_id)
+    await attach_payment_url(plan)
     if plan.get('orders'):
         state=memory.read(owner(t))
         state['last_order']={'elements':copy.deepcopy(plan.get('order_elements',{})),
             'store_code':plan['storeCode'],'items':copy.deepcopy(plan.get('requested_items',[])),
             'item_summary':state.get('item_summary','')}
         memory.write(owner(t),state)
-    return result(public(plan),markdown(plan))
+    data=public(plan)
+    if plan['state']=='awaiting_payment':
+        data.update(next_tool='wait_payment',next_arguments={'plan_id':plan_id,'timeout':60},
+                    before_next_tool='先在可见正文原样输出 display_markdown 付款卡，再循环 wait_payment；已付款后告知真实取餐码和门店。')
+    return result(data,markdown(plan))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
@@ -380,7 +385,27 @@ async def pay_card(plan_id: str) -> CallToolResult:
     plan = await service.status(token(),plan_id)
     for o in plan["orders"]:
         o["remaining_seconds"] = max(0,int(deadline(o["expirePayTime"])-time.time()))
+    await attach_payment_url(plan)
     return result(public(plan),markdown(plan))
+
+
+async def attach_payment_url(plan):
+    if not plan.get('payment_key'):
+        plan['payment_key']=secrets.token_urlsafe(32)
+        service.save(plan)
+    plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
+    return plan
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+async def wait_payment(plan_id: str, timeout: Annotated[int, Field(ge=0,le=60)] = 60) -> CallToolResult:
+    """先原样输出付款卡，再每轮等待最多60秒；每3秒查状态。还没付款时继续调用，临期自动撤回。"""
+    plan=await service.wait_payment(token(),plan_id,timeout)
+    await attach_payment_url(plan)
+    text='还没付款。' if plan['state']=='awaiting_payment' else '已取消。' if plan['state'] in {'cancelled','awaiting_coupon_return'} else '已付款。' if plan['state']=='paid' else '订单正在核验。'
+    codes=[str(o[k]) for o in plan.get('orders',[]) for k in ('takeCode','pickupCode','orderCode','mealCode') if o.get(k)]
+    text+='\n'+plan.get('storeName','所选门店')+(' · 取餐码：'+'、'.join(dict.fromkeys(codes)) if codes else '')
+    return result(dict(public(plan),next_tool='wait_payment' if plan['state']=='awaiting_payment' else '',pickup_codes=list(dict.fromkeys(codes))),text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
@@ -1091,7 +1116,22 @@ async def favicon(request):
     return FileResponse(ROOT/"web/favicon.svg")
 
 
-app = Auth(Starlette(routes=[Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
+async def payment_page(request):
+    key=request.path_params['payment_key']
+    # An unguessable, plan-specific read capability; never accept a raw plan ID.
+    plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans') if json.loads(body).get('payment_key')==key),None)
+    headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
+    if not plan:return JSONResponse({'error':'付款链接已失效，请回到对话查询订单。'},status_code=404,headers=headers)
+    if not request.url.path.endswith('/state'):
+        return FileResponse(ROOT/'web/payment.html',headers=headers)
+    t=active_credentials.get(plan['owner']) or (UPSTREAM_TOKEN if UPSTREAM_TOKEN and owner(UPSTREAM_TOKEN)==plan['owner'] else None)
+    if not t:return JSONResponse({'error':'账户连接已失效，请回到对话重新授权。'},status_code=401,headers=headers)
+    plan=await service.status(t,plan['plan_id'])
+    from coupon_split.payment import payment_state
+    return JSONResponse(payment_state(plan,request.headers.get('user-agent','')),headers=headers)
+
+
+app = Auth(Starlette(routes=[Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
 
 if __name__ == "__main__":
     import uvicorn

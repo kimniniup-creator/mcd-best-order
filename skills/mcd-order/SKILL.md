@@ -20,3 +20,11 @@ description: 麦当劳点餐入口。直接调用 mcd_start(utterance=用户本�
 
 12. MCP 启动失败且缺 uv 时，原样转达安装提示。Windows PowerShell：`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`；macOS/Linux：`curl -LsSf https://astral.sh/uv/install.sh | sh`。未经用户同意不要代执行安装。安装后重开终端和Claude Code/Codex。Claude 用户必须安装完整插件（含 hooks），不能只安装 MCP + skill。
 13. 授权失效时调用 `mcd_start` 获取本机重新授权链接，不向对话索要 Token。授权成功后说“可以说‘帮我配’‘我自己点’或‘外送到公司’”，然后继续原点餐意图，不让用户重复。
+
+
+## 内容需求、官方比价与付款（0.6.0）
+- 你负责“吃什么”：按人数、口味和预算提案；propose_cart 中的套餐 SKU 也是内容需求。引擎会展开精确规格和数量，比较单点、套餐、券、会员卡与拆单。
+- quote_best 的 comparison_summary 是解释省钱理由的唯一价格依据；只解释其中实际核验的策略和差价，不编造券、卡优惠或未核价的比较。原样显示报价卡（含比较摘要）。
+- 用户明确确认且宿主允许后才 place_orders。下单后先原样输出付款卡和“打开付款页”本地链接，再循环调用 wait_payment(plan_id,timeout=60)。返回“还没付款”时继续等待；取消或付款成功后结束。临近到期会自动撤回。
+- 电脑用手机麦当劳 App 扫一扫（推荐）或微信扫码；手机链接可打开麦当劳 App 付款。必须安装麦当劳 App。App 的“我的订单”作为备选入口，等待用户本人手机实测。
+- 已付款后告诉用户真实返回的取餐码和门店；没有取餐码就说明还未返回，不能猜。
