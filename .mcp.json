@@ -1,14 +1,16 @@
 {
   "mcpServers": {
     "coupon-split": {
-      "command": "sh",
+      "command": "uvx",
       "args": [
-        "-c",
-        "if command -v uvx >/dev/null 2>&1; then exec uvx --from git+https://github.com/kimniniup-creator/mcd-best-order.git coupon-split-mcp; else printf '%s\\n' 'Missing uv. Windows PowerShell: powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\" ; macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh. Ask the user before installing; reopen the terminal afterwards.' >&2; exit 127; fi"
+        "--from",
+        "git+https://github.com/kimniniup-creator/mcd-best-order.git",
+        "coupon-split-mcp"
       ],
       "env": {
         "PYTHONUTF8": "1"
-      }
+      },
+      "startup_timeout_sec": 120
     }
   }
 }
