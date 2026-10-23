@@ -11,6 +11,6 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 case "$1" in
   server) exec uv run --directory "$root" --no-dev --locked coupon-split-mcp ;;
   hook) exec uv run --no-project --python 3.14 "$root/hooks/order_context.py" ;;
-  check) exit 0 ;;
+  check) exec uvx --from git+https://github.com/kimniniup-creator/mcd-best-order.git coupon-split doctor ;;
   *) exit 2 ;;
 esac

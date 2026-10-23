@@ -62,10 +62,13 @@ def preflight():
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('action',choices=['setup','forget-credential'])
+    parser.add_argument('action',choices=['setup','doctor','forget-credential'])
     parser.add_argument('--host',choices=['codex-ide','codex-plugin','claude-code'])
     parser.add_argument('--apply',action='store_true',help='明确同意写入 MCP 配置和用户 skill')
     args=parser.parse_args()
+    if args.action=='doctor':
+        preflight()
+        return
     if args.action=='forget-credential':
         if not args.apply:raise SystemExit('需 --apply 同意清除本机凭据；不会删除点餐状态。')
         import keyring
