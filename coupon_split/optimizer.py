@@ -258,7 +258,12 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
         cards = [menu.get(i["productCode"], {}).get("withOrder") for i in comp]
         with_order = None
         for card in [c for c in cards if c]:
-            with_order = {"membershipCode": card["membershipCode"], "membershipSpecId": card["specId"]}
+            membership=card.get('membershipCode') if isinstance(card,dict) else None
+            spec=card.get('membershipSpecId',card.get('specId')) if isinstance(card,dict) else None
+            if not membership or not spec:
+                excluded.append({'reason':'未取得完整会员卡参数，排除未核实的买卡方案'})
+                continue
+            with_order = {"membershipCode": membership, "membershipSpecId": spec}
             add([dict(base, items=comp, withOrder=with_order)], "先买卡再省", estimate(comp,True) + Decimal("9.90"))
             break
         for coupon in coupons:

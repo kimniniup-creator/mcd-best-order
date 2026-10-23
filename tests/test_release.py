@@ -140,3 +140,19 @@ async def test_item_details_fill_account_without_asking_user(tmp_path,monkeypatc
     monkeypatch.setattr(s,'memory',LocalState(tmp_path/'memory'))
     result=await s.get_item_detail('fixture-store','100',{'fulfillment':'pickup'})
     assert result.structuredContent['default_item']['productCode']=='100'
+
+
+async def test_incomplete_membership_does_not_abort_regular_quote():
+    from coupon_split.optimizer import quote
+    class Pricing:
+        async def call(self,token,name,args):
+            if name=='query-meals':return {'data':{'meals':{'100':{'name':'虚构单品','currentPrice':'1','originalPrice':'1','withOrder':{'specId':'fixture-spec'}}}}}
+            if name=='query-store-coupons':return {'data':[]}
+            if name=='query-meal-detail':return {'data':{'code':'100','name':'虚构单品','rounds':[]}}
+            if name=='calculate-price':
+                assert not args.get('withOrder')
+                return {'data':{'price':100,'productList':[{'productCode':'100','quantity':1,'productName':'虚构单品','subtotal':100}]}}
+            raise AssertionError(name)
+    result=await quote(Pricing(),'fixture','fixture-store',[{'productCode':'100','quantity':1}],True)
+    assert result['baseline']==100 and result['plans'][0]['price']==100
+    assert any('会员卡参数' in entry['reason'] for entry in result['exclusions'])
