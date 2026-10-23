@@ -3,7 +3,7 @@
 if ! command -v uv >/dev/null 2>&1; then
   hint='缺少 uv。Windows PowerShell: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" ; macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh 。安装后重开终端和 Claude Code 或 Codex。'
   case "$1" in
-    server) printf '%s\n' "$hint" >&2; exit 127 ;;
+    server) printf '%s\n' "$hint" >&2; exec sh "$(dirname -- "$0")/missing_uv.sh" ;;
     *) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"缺少 uv。请向用户展示安装命令：Windows PowerShell：powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"；macOS/Linux：curl -LsSf https://astral.sh/uv/install.sh | sh。安装后重开终端。"}}'; exit 0 ;;
   esac
 fi

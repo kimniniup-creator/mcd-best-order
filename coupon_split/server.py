@@ -572,6 +572,14 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if onboarding.get('utterance'):
         memory.write('onboarding',{})
     t=token();state=memory.read(owner(t))
+    existing=carts.get(state.get('active_session',''))
+    if (existing and existing.get('last_utterance')==utterance
+            and (existing.get('conversation_id')==conversation_id or session_id==state.get('active_session'))
+            and (plan is None or plan==existing.get('plan'))
+            and existing.get('store_code')):
+        # Host retries can arrive after the page submitted. Never turn that
+        # accepted cart back into an unsubmitted one or discard its page state.
+        return await get_cart(state['active_session'],wait=0)
     if utterance.strip().strip('。！!') in {'好了','选好了'}:
         sid=state.get('active_session','')
         if sid and carts.get(sid):return await get_cart(sid,wait=0)
@@ -632,7 +640,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     elif re.search(r'自己(?:来)?(?:点|选|看看菜单|看下菜单|看菜单)',utterance):plan='我自己点'
     elif concrete and plan is None:plan='我自己点'
     sid=state['active_session'] if continuing else secrets.token_urlsafe(24)
-    cart={'owner':owner(t),'conversation_id':conversation_id,'items':[],'elements':e,'store_code':previous.get('store_code'),'submitted':False,'location':inferred.get('location',active.get('location','') if continuing else ''),'city':state.get('last_search',{}).get('city',''),'intent':utterance if concrete and plan!='帮我配' else '', 'plan':plan,'people':inferred.get('people')}
+    cart={'owner':owner(t),'conversation_id':conversation_id,'last_utterance':utterance,'items':[],'elements':e,'store_code':previous.get('store_code'),'submitted':False,'location':inferred.get('location',active.get('location','') if continuing else ''),'city':state.get('last_search',{}).get('city',''),'intent':utterance if concrete and plan!='帮我配' else '', 'plan':plan,'people':inferred.get('people')}
     if continuing and not concrete:
         cart['items']=copy.deepcopy(active.get('items',[]))
         cart['intent']=active.get('intent','')
