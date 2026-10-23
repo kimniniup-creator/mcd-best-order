@@ -19,11 +19,11 @@ def configure_codex():
     original=path.read_text(encoding='utf-8') if path.exists() else ''
     tomllib.loads(original)
     prefix='plugins."mcd-best-order@mcd-best-order-marketplace".mcp_servers.coupon-split'
-    policies={prefix:('default_tools_approval_mode','prompt'),prefix+'.tools.quote_best':('approval_mode','approve')}
+    policies={prefix:('default_tools_approval_mode','auto'),prefix+'.tools.quote_best':('approval_mode','approve')}
     for tool in ('place_orders','cancel_plan','pay_card'):
         policies[prefix+'.tools.'+tool]=('approval_mode','prompt')
     existing=tomllib.loads(original).get('plugins',{}).get('mcd-best-order@mcd-best-order-marketplace',{}).get('mcp_servers',{}).get('coupon-split',{})
-    if existing.get('default_tools_approval_mode')=='prompt' and existing.get('tools',{}).get('quote_best',{}).get('approval_mode')=='approve' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan','pay_card')):
+    if existing.get('default_tools_approval_mode')=='auto' and existing.get('tools',{}).get('quote_best',{}).get('approval_mode')=='approve' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan','pay_card')):
         print('本插件报价与写操作审批策略已配置。')
         return
     sections=[]
