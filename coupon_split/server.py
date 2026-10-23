@@ -670,6 +670,11 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         cart['items']=copy.deepcopy(active.get('items',[]))
         cart['intent']=active.get('intent','')
         cart['intent_resolved']=active.get('intent_resolved',False)
+        # A repeated resume is a retry of an already accepted selection, not
+        # an invitation to reopen the picker and add more food.
+        cart['submitted']=active.get('submitted',False)
+        for key in ('item_summary','pending_plan_id'):
+            if key in active:cart[key]=active[key]
     carts[sid]=cart
     if active and not continuing and active.get('items') and not resume_requested:
         state['pending_session']=state['active_session']

@@ -9,7 +9,7 @@ import tomllib
 import sys
 from pathlib import Path
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2/coupon_split-0.5.2-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.2-r14-final/coupon_split-0.5.2-1-py3-none-any.whl'
 
 
 def configure_codex(plugin=True):
