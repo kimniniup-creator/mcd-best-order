@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.3/coupon_split-0.5.3-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.3-r15-final/coupon_split-0.5.3-1-py3-none-any.whl'
 ROOT=Path(__file__).resolve().parent
 
 
