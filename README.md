@@ -42,7 +42,7 @@ Codex CLI，在终端执行这两行，然后新开对话：
 
 ```sh
 codex plugin marketplace add kimniniup-creator/mcd-best-order
-codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 第二行自动配置本插件：只让本机报价工具自动通过；下单、撤回、支付状态保留宿主审批。保留其他插件配置，不需手改 TOML。PowerShell 5 不支持 `&&` 时，将第二行中的两条命令分两行运行。需使用支持 `codex plugin` 的新版 CLI；插件安装后重新开启会话。交互式 Codex 弹出读取或工具审批时，**弹出时点允许**。点餐工具自带完整协议，无需通过 shell 读取 SKILL.md。宿主策略参见 [OpenAI 插件文档](https://developers.openai.com/plugins/build/plugins#configure-installed-server-policy)。
@@ -50,7 +50,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from https:/
 Codex IDE 没有插件入口时，可在终端运行以下一条命令，自动注册 MCP 并安装 skill；此路径的交接验证是 CLI 非交互模拟，实际 IDE 面板仍需现场验收：
 
 ```sh
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 公开仓库和 wheel 不需要申请仓库权限。Git/uv 未装时先补齐；遇到 Git 的“找不到命令”先检查 PATH，遇到下载失败先检查网络，不要索要作者私有仓库权限。Claude 第一个会话工具尚未连上时会提示“服务启动中，请稍候再说一次”；稍候重说原话即可。
@@ -92,7 +92,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 先结束正在点餐的会话。在卸载插件之前，清除本机凭据：
 
 ```sh
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude 对话执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 终端执行 `codex plugin remove mcd-best-order@mcd-best-order-marketplace`。清除凭据不会删除购物车；确认不需要历史后，手动删除自己的 `~/.coupon-split/`（或自己设置的 `COUPON_SPLIT_HOME`）。Codex 的本插件策略表可保留，不会在卸载后运行。去开放平台重新生成 Token 可使旧 Token 作废。

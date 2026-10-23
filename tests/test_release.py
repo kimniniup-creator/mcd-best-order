@@ -74,6 +74,20 @@ def test_codex_policy_is_scoped_and_idempotent(tmp_path,monkeypatch):
     assert all(policy['tools'][tool]['approval_mode']=='prompt' for tool in ('place_orders','cancel_plan','pay_card'))
 
 
+def test_codex_ide_policy_preserves_server_command_and_other_servers(tmp_path,monkeypatch):
+    monkeypatch.setenv('CODEX_HOME',str(tmp_path))
+    path=tmp_path/'config.toml'
+    path.write_text('[mcp_servers.other]\ncommand="untouched"\n[mcp_servers.coupon-split]\ncommand="uvx"\nrequired=true\n',encoding='utf-8')
+    configure_codex(plugin=False);first=path.read_text(encoding='utf-8');configure_codex(plugin=False)
+    assert path.read_text(encoding='utf-8')==first
+    config=tomllib.loads(first)
+    assert config['mcp_servers']['other']=={'command':'untouched'}
+    policy=config['mcp_servers']['coupon-split']
+    assert policy['required'] and policy['command']=='uvx'
+    assert policy['tools']['quote_best']['approval_mode']=='approve'
+    assert policy['tools']['place_orders']['approval_mode']=='prompt'
+
+
 async def test_expired_wrong_account_and_tamper_are_rejected(tmp_path):
     api=Fixture();service=Service(api,str(tmp_path/'plans.db'));p=plan();service.save(p)
     with pytest.raises(ValueError):await service.place('other',p['plan_id'],p['confirm_token'])

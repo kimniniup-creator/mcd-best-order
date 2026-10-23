@@ -9,21 +9,22 @@ import tomllib
 import sys
 from pathlib import Path
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl'
 
 
-def configure_codex():
+def configure_codex(plugin=True):
     """Only this plugin's policy is edited; writes retain host approval prompts."""
     root=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))
     root.mkdir(parents=True,exist_ok=True)
     path=root/'config.toml'
     original=path.read_text(encoding='utf-8') if path.exists() else ''
     tomllib.loads(original)
-    prefix='plugins."mcd-best-order@mcd-best-order-marketplace".mcp_servers.coupon-split'
+    prefix='plugins."mcd-best-order@mcd-best-order-marketplace".mcp_servers.coupon-split' if plugin else 'mcp_servers.coupon-split'
     policies={prefix:('default_tools_approval_mode','auto'),prefix+'.tools.quote_best':('approval_mode','approve')}
     for tool in ('place_orders','cancel_plan','pay_card'):
         policies[prefix+'.tools.'+tool]=('approval_mode','prompt')
-    existing=tomllib.loads(original).get('plugins',{}).get('mcd-best-order@mcd-best-order-marketplace',{}).get('mcp_servers',{}).get('coupon-split',{})
+    config=tomllib.loads(original)
+    existing=(config.get('plugins',{}).get('mcd-best-order@mcd-best-order-marketplace',{}) if plugin else config).get('mcp_servers',{}).get('coupon-split',{})
     if existing.get('default_tools_approval_mode')=='auto' and existing.get('tools',{}).get('quote_best',{}).get('approval_mode')=='approve' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan','pay_card')):
         print('本插件报价与写操作审批策略已配置。')
         return
@@ -109,4 +110,21 @@ def main():
     subprocess.run([executable,*command[1:]],check=True)
     target.parent.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(source,target)
+    if args.host=='codex-ide':
+        # Server-scoped readiness and auth forwarding; never alter other MCPs.
+        path=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))/'config.toml'
+        text=path.read_text(encoding='utf-8')
+        header='[mcp_servers.coupon-split]'
+        block='required = true\nstartup_timeout_sec = 120\nenv_vars = ["MCD_MCP_TOKEN", "COUPON_SPLIT_HOME", "ALLOW_REAL_ORDERS", "COUPON_SPLIT_SIMULATE", "UV_CACHE_DIR", "PYTHON_KEYRING_BACKEND"]\n'
+        # codex mcp add just created this section; remove only owned settings
+        # so repeated setup remains valid TOML and keeps existing credentials.
+        sections=[]
+        for section in re.split(r'(?=^\[)',text,flags=re.M):
+            if section.splitlines() and section.splitlines()[0].strip()==header:
+                section=re.sub(r'^(?:required|startup_timeout_sec|env_vars)\s*=.*\n?', '', section,flags=re.M)
+                section=section.replace(header,header+'\n'+block,1)
+            sections.append(section)
+        text=''.join(sections);tomllib.loads(text);path.write_text(text,encoding='utf-8')
+        configure_codex(plugin=False)
+        preflight()
     print('完成。请新开宿主会话，说出想吃的餐品。')

@@ -6,13 +6,15 @@
         "--python",
         "3.14",
         "--from",
-        "https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl",
+        "https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl",
         "coupon-split-mcp"
       ],
       "env": {
         "PYTHONUTF8": "1"
       },
-      "startup_timeout_sec": 120
+      "startup_timeout_sec": 120,
+      "required": true,
+      "env_vars": ["MCD_MCP_TOKEN", "COUPON_SPLIT_HOME", "ALLOW_REAL_ORDERS", "COUPON_SPLIT_SIMULATE", "UV_CACHE_DIR", "PYTHON_KEYRING_BACKEND"]
     }
   }
 }

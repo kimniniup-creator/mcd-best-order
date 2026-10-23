@@ -9,7 +9,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 case "$1" in
-  server) exec uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split-mcp ;;
+  server) exec uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split-mcp ;;
   hook) exec uv run --no-project --python 3.14 "$root/hooks/order_context.py" ;;
   check) exec uv run --no-project --python 3.14 "$root/hooks/order_context.py" startup ;;
   *) exit 2 ;;
