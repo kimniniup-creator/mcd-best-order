@@ -27,7 +27,7 @@ macOS / Linux：
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-安装后重开终端，确认 `uv --version`。uv 安装来源：[官方安装指南](https://docs.astral.sh/uv/getting-started/installation/)。首次加载会下载 Python 和依赖，请等启动完成。
+安装后重开终端，确认 `uv --version`。uv 安装来源：[官方安装指南](https://docs.astral.sh/uv/getting-started/installation/)。**首次约 1 分钟**，会下载 Python 和依赖；后续使用固定 0.5.0 wheel 的 uvx 缓存，不再逐会话解析 GitHub 源码并构建。
 
 Claude Code CLI / VS Code 扩展，在 Claude 对话中执行这两行，然后新开对话：
 
@@ -42,17 +42,29 @@ Codex CLI，在终端执行这两行，然后新开对话：
 
 ```sh
 codex plugin marketplace add kimniniup-creator/mcd-best-order
-codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from git+https://github.com/kimniniup-creator/mcd-best-order.git coupon-split setup --host codex-plugin --apply
+codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
-第二行自动配置本插件：只让本机报价工具自动通过；下单、撤回、支付状态保留宿主审批。保留其他插件配置，不需手改 TOML。需使用支持 `codex plugin` 的新版 CLI；插件安装后重新开启会话。宿主策略参见 [OpenAI 插件文档](https://developers.openai.com/plugins/build/plugins#configure-installed-server-policy)。Codex IDE 若无插件入口，请在 Codex CLI 使用，不把未验证的 IDE 路径当成正式安装流程。
+第二行自动配置本插件：只让本机报价工具自动通过；下单、撤回、支付状态保留宿主审批。保留其他插件配置，不需手改 TOML。PowerShell 5 不支持 `&&` 时，将第二行中的两条命令分两行运行。需使用支持 `codex plugin` 的新版 CLI；插件安装后重新开启会话。交互式 Codex 弹出读取或工具审批时，**弹出时点允许**。点餐工具自带完整协议，无需通过 shell 读取 SKILL.md。宿主策略参见 [OpenAI 插件文档](https://developers.openai.com/plugins/build/plugins#configure-installed-server-policy)。
+
+Codex IDE 没有插件入口时，可在终端运行以下一条命令，自动注册 MCP 并安装 skill；此路径的交接验证是 CLI 非交互模拟，实际 IDE 面板仍需现场验收：
+
+```sh
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split setup --host codex-ide --apply
+```
+
+公开仓库和 wheel 不需要申请仓库权限。Git/uv 未装时先补齐；遇到 Git 的“找不到命令”先检查 PATH，遇到下载失败先检查网络，不要索要作者私有仓库权限。Claude 第一个会话工具尚未连上时会提示“服务启动中，请稍候再说一次”；稍候重说原话即可。
 
 ## 首次授权与点餐
 
-1. 新对话说“我要吃麦当劳”。助手会给出 **本机授权页** 链接。
-2. 打开授权页 → 去 `open.mcd.cn` 的 MCP 页面 → 手机验证码登录 → 激活并复制 Token。
-3. 回到本机授权页粘贴，点“保存到这台电脑”。页面会校验；空值、无效或过期会显示原因。
-4. 显示连接成功后回对话说“好了”。助手继续原来的点餐流程，也会提示你可以说“帮我配”“我自己点”或“外送到公司”。
+准备好已登录宿主、Git 和 uv 后，从安装到首报价共 6 步（上面两行安装算前两步；PowerShell 5 拆行执行仍为同一安装步骤）：
+
+1. 添加公开 marketplace（上面的第一行）。
+2. 安装插件（第二行；Codex 自动 setup 包含在此步）。新开对话。
+3. 说“我要吃麦当劳”，打开助手给的 **本机授权页**。
+4. 去 `open.mcd.cn` 的 MCP 页面，手机验证码登录，激活并复制自己的 Token。
+5. 回本机授权页粘贴，点“保存到这台电脑”，确认连接成功。空值、无效或过期会显示原因。
+6. 回对话说“好了，我自己点，在某城市某地标附近，到店自取，外带”，打开点餐页选好并提交；助手自动给首报价，不再要求重复说明。可以把地点、餐具、预约一起说。
 
 不要把 Token 发进聊天。Token 过期时会给出重新授权链接，按以上步骤重新保存。每位用户使用自己的账户和券。Windows 存入凭据管理器；macOS 存入钥匙串。其他系统无可用钥匙串时才使用仅本人可读的本机凭据文件，页面会说明保存位置。Token 仅用于访问麦当劳官方服务，不上传到插件仓库或作者服务器，不记入聊天和产品日志。
 
@@ -80,11 +92,11 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from git+htt
 先结束正在点餐的会话。在卸载插件之前，清除本机凭据：
 
 ```sh
-uvx --from git+https://github.com/kimniniup-creator/mcd-best-order.git coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude 对话执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 终端执行 `codex plugin remove mcd-best-order@mcd-best-order-marketplace`。清除凭据不会删除购物车；确认不需要历史后，手动删除自己的 `~/.coupon-split/`（或自己设置的 `COUPON_SPLIT_HOME`）。Codex 的本插件策略表可保留，不会在卸载后运行。去开放平台重新生成 Token 可使旧 Token 作废。
 
 版权：保留所有权利，见 LICENSE。项目与麦当劳无隶属关系。
 
-当前为验收候选版。真实下单、撤回与退券的完整闭环尚未通过本轮实测；仓库可安装不代表整体验收通过。
+当前为 0.5.0 验收候选版。引擎层真实自测已通过：到店单品一单、取得官方支付卡、不付款、立即撤回，订单列表只读确认已取消。账户当时无可用券，退券闭环未验证。宿主审批框留给同事在交互界面验收；引擎层检查不代替交互审批验收。

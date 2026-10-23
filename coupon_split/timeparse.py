@@ -8,7 +8,7 @@ DATE = rf'今天|明天|后天|(?:本|这|下)?(?:周|星期)[一二三四五六
 PERIOD = r'早上|上午|中午|下午|晚上|傍晚|夜里|凌晨|明早|今晚'
 CLOCK = rf'(?P<h>{NUM})(?:点|时)(?:(?P<part>半|一刻|三刻)|(?P<m>{NUM})分?)?|(?P<colon>\d{{1,2}}[:：]\d{{2}})'
 TEMPORAL = re.compile(rf'(?:{DATE})|(?:{PERIOD})|(?:{CLOCK})|预约|现在取|现在送|立即取|立即送')
-UNSUPPORTED = r'大后天|下下(?:周|星期)|[上下]个?月|明年|明日|明晚|后晚|周末|月底|月末|小时|分钟后|秒'
+UNSUPPORTED = r'大后天|下下(?:周|星期)|[上下]个?月|明年|明日|明晚|后晚|周末|月底|月末|小时|分钟后|秒|晚点|过会儿?|等下|等会儿?|稍后|一会儿?'
 
 
 class TimeClarification(ValueError):
@@ -48,7 +48,7 @@ def parse_time(text, now=None):
         if clocks or dates or periods or '预约' in text: ask()
         return True, None
     if len(clocks) != 1 or len(dates) > 1 or len(periods) > 1: ask()
-    if re.search(r'左右|大概|或者|或|到\d|至\d|多点|点多|点钟后|点以后', text): ask()
+    if re.search(r'左右|大概|或者|或|到\d|至\d|多点|点多|点钟后|点以后|前', text): ask()
     period = periods[0] if periods else ''
     day = now.date()
     if period == '明早': day += timedelta(days=1)
@@ -74,6 +74,7 @@ def parse_time(text, now=None):
         hour = number(clock['h'])
         minute = {'半':30, '一刻':15, '三刻':45}.get(clock['part'], number(clock['m']) if clock['m'] else 0)
     if hour > 23 or minute > 59: ask()
+    if period and not clock['colon'] and hour > 12: ask()
     if period in ('下午', '晚上', '傍晚', '夜里', '今晚'):
         if 1 <= hour < 12: hour += 12
         elif hour == 12 and period != '下午': ask()
@@ -89,4 +90,7 @@ def parse_time(text, now=None):
         if hour >= 12: ask()
     elif not clock['colon'] and hour <= 12:
         ask()
+    scheduled=datetime.combine(day,datetime.min.time()).replace(hour=hour,minute=minute,tzinfo=now.tzinfo)
+    if scheduled <= now:
+        raise TimeClarification('这个时间已经过去了，请换一个时间；如果是明天取，请明确说“明天”。')
     return True, day.isoformat() + f' {hour:02d}:{minute:02d}'

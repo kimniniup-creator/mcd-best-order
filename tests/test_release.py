@@ -11,6 +11,13 @@ from coupon_split.presentation import markdown, public
 from coupon_split.cli import configure_codex
 
 
+@pytest.fixture(autouse=True)
+def stdio_test_context(monkeypatch):
+    # These tests exercise the stdio token recovery path explicitly; HTTP
+    # requests must continue to require their own per-request credential.
+    monkeypatch.setenv('COUPON_SPLIT_STDIO','1')
+
+
 def plan():
     request={'items':[{'productCode':'100','quantity':1}]}
     order={'request':request,'price':100,'productList':[dict(request['items'][0],productName='虚构单品',subtotal=100)],'evidence_id':'fixture'}

@@ -44,7 +44,8 @@ def matches(text, rows):
 def intent_text(utterance):
     from coupon_split.timeparse import strip_time
     utterance = strip_time(utterance)
-    utterance = re.sub(r'只要|刚才说的餐品|刚才那份|按官方默认规格|官方默认规格|默认规格|保留原来的餐品', '', utterance)
+    utterance = re.sub(r'(?:我)?(?:想)?自己(?:来)?(?:点|选|看看菜单|看下菜单|看菜单)(?:餐)?', '', utterance)
+    utterance = re.sub(r'好了|重新点|新的一单|再下一单|只要|刚才说的餐品|刚才那份|按官方默认规格|官方默认规格|默认规格|保留原来的餐品', '', utterance)
     text = re.sub(r'(?<!现)(?:我在|位于|现在在|在)(?:[^，。,；]+?)(?:附近|[，。,；]|$)', '', utterance)
     text = re.sub(r'(?:帮我配|帮我推荐|帮我点个|帮我点|帮我|给我|我自己点|自己点|自己选|照上次那份|照上次|照旧)', '', text)
     text = re.sub(r'(?:不要餐具|需要餐具|要餐具|不带餐具|不用餐具|餐具|到店自取|开车去|开车|去拿|得来速|到店|自取|堂食|外带|外送|外卖|麦乐送|立即送|立即取|现在取|现在送)', '', text)

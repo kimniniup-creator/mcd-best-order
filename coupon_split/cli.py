@@ -6,9 +6,10 @@ import os
 import json
 import re
 import tomllib
+import sys
 from pathlib import Path
 
-SOURCE='git+https://github.com/kimniniup-creator/mcd-best-order.git'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-py3-none-any.whl'
 
 
 def configure_codex():
@@ -48,7 +49,7 @@ def preflight():
     from mcp import ClientSession,StdioServerParameters
     from mcp.client.stdio import stdio_client
     async def check():
-        params=StdioServerParameters(command=shutil.which('uvx') or 'uvx',args=['--from',SOURCE,'coupon-split-mcp'],env=dict(os.environ))
+        params=StdioServerParameters(command=sys.executable,args=['-m','coupon_split.stdio'],env=dict(os.environ))
         async with stdio_client(params) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
@@ -62,10 +63,19 @@ def preflight():
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('action',choices=['setup','doctor','forget-credential'])
+    parser.add_argument('action',choices=['setup','doctor','startup','forget-credential'])
     parser.add_argument('--host',choices=['codex-ide','codex-plugin','claude-code'])
     parser.add_argument('--apply',action='store_true',help='明确同意写入 MCP 配置和用户 skill')
     args=parser.parse_args()
+    if args.action=='startup':
+        import contextlib,io
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):preflight()
+            message='点餐服务已启动。直接调用 mcd_start，按返回协议继续；全程中文，无需 shell 读取 SKILL.md。'
+        except SystemExit:
+            message='服务启动中，请稍候再说一次。请检查 uv 和网络；不要编造已连接或报价。'
+        print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':message}},ensure_ascii=False))
+        return
     if args.action=='doctor':
         preflight()
         return
@@ -87,7 +97,7 @@ def main():
         preflight()
         return
     if args.host=='claude-code':
-        raise SystemExit('Claude 必须用完整插件：/plugin marketplace add kimniniup-creator/mcd-best-order，然后 /plugin install mcd-best-order@mcd-best-order-marketplace')
+        raise SystemExit('Claude 请用插件安装：/plugin marketplace add kimniniup-creator/mcd-best-order，然后 /plugin install mcd-best-order@mcd-best-order-marketplace')
     if args.host=='codex-ide':
         command=['codex','mcp','add','coupon-split','--','uvx','--from',SOURCE,'coupon-split-mcp']
         target=Path.home()/'.agents/skills/mcd-order/SKILL.md'

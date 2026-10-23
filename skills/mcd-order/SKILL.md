@@ -1,6 +1,6 @@
 ---
 name: mcd-order
-description: 必须在所有麦当劳点餐对话开始时读取本技能，包括已有 MCP 工具的情况。用户表达想吃、点、来份、饿了以及麦当劳或菜单里的任一餐品，或修改点餐时使用。也用于“帮我配”“我自己点”“照上次那份”和“好了”恢复点餐。涵盖板烧、麦旋风、麦乐鸡、蛋挞、双层吉士等自然表达，不要求固定唤醒句。
+description: 麦当劳点餐入口。直接调用 mcd_start(utterance=用户本轮原话)，无需 shell 读取本文件；完整协议在工具描述和返回里。用于点餐、修改、帮我配、我自己点、照上次那份及“好了”恢复。服务尚未连上时说“服务启动中，请稍候再说一次”。
 ---
 
 1. 收到每条点餐原话（包括后续的方式、外带和餐具）立即调用 `mcd_start(utterance)`。utterance 必须逐字等于本轮最后一条用户消息，严禁拼入上一轮餐品/要素或改写成汇总；例如第二轮只说“在望京中街附近”，就只传这句，历史由服务端自动保留。只使用本机授权账户；缺授权时原样展示 setup_url，不向对话索要 Token。
@@ -15,7 +15,7 @@ description: 必须在所有麦当劳点餐对话开始时读取本技能，包�
 8. **原样输出 display_markdown，不得改写或删行。** 完整展示 `display_markdown` 的省钱、金额、单数/付款次数、不买卡备选、订单要素和规格；到报价结束回合，等明确确认。`elements_pending` 的堂食/外带并到确认句，不先多问一轮。
 9. **严禁自主下单**。报价后结束回合，等用户明确确认，将确认原话逐字传入 `place_orders(user_confirmation=...)`，并等宿主弹出审批通过；凭证绑定账户，10分钟过期。默认真实下单；`COUPON_SPLIT_SIMULATE=true` 为模拟模式。超过 ¥200 时，先展示具体金额，要求用户追加回复“确认下单 ¥实际金额（两位小数）”，逐字传入 `high_amount_confirmation`。审批被拒绝或宿主不支持审批时不得绕过。下单后原样输出支付卡，15分钟内在麦当劳官方付款，手机可跳 App，钱直接给麦当劳；用户说撤回就 `cancel_plan`，再 `pay_card` 确认状态和退券。结果不明时只对账/撤回，禁止重新下单。仍禁止 `confirm_address`、地址创建、领券、积分和抽奖。错误用人话呈现，不编造报价。
 
-10. `get_cart` 返回 `handoff_correction` 时，若链接尚未展示，立即把 display_markdown 作为可见正文输出，再继续等待；已展示就不重复。该纠正不依赖宿主钩子。预约不清楚必须按 `time_clarification` 追问，禁止模型自行猜日期/时段。sources 由服务端核对本轮原话，不能补造“你说的”。
+10. `get_cart` 返回 `handoff_correction` 时，若链接尚未展示，立即把 display_markdown 作为可见正文输出，再继续等待；同一回合已展示就不重复，包括“好了”恢复回合。预约不清楚必须按 `time_clarification` 追问，禁止模型自行猜日期/时段。sources 由服务端核对整个当前会话的原话，跨轮保留“你说的”；只来自已结束上一单的历史才标“沿用上次”，系统最近门店标“最近”，其他标“默认”。
 11. “好了”恢复后的 quote_best 方案卡与正常路径完全相同：最终回复必须逐字复制完整 display_markdown，包含表格、覆盖、备选和确认句；不得概述、改写或加引言。
 
 12. MCP 启动失败且缺 uv 时，原样转达安装提示。Windows PowerShell：`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`；macOS/Linux：`curl -LsSf https://astral.sh/uv/install.sh | sh`。未经用户同意不要代执行安装。安装后重开终端和宿主。Claude 用户必须安装完整插件（含 hooks），不能只安装 MCP + skill。

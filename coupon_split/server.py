@@ -113,7 +113,7 @@ async def find_store(city: str, keyword: str, fulfillment: Literal['pickup','dri
         if cart['elements'].get('fulfillment')!=fulfillment:
             cart['elements'].setdefault('sources',{})['fulfillment']='default'
         cart['elements'].update(fulfillment=fulfillment)
-        cart['elements'].setdefault('sources',{})['store_code']='utterance'
+        cart['elements'].setdefault('sources',{})['store_code']='nearest'
         if address_id: cart['elements']['addressId']=address_id
         if plan: cart['plan']=plan
         if stores:
@@ -215,6 +215,7 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     """输入 sku:数量，核价并在本地保存方案和确认凭证，不创建上游订单。同购物车并发复用，其余同账户排队。先展示金额，等下一回合确认。"""
     t=token()
     incoming=normalize_elements(elements)
+    explicit_mode=incoming.get('fulfillment')
     state=memory.read(owner(t))
     active=carts.get(state.get('active_session',''))
     previous=state.get('elements',{})
@@ -227,13 +228,14 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     elements=merge_elements(previous,incoming)
     selected_store=get_store_context(t,store_code)
     if selected_store.get('fulfillment') and selected_store['fulfillment']!=elements.get('fulfillment'):
-        raise ValueError('上次的方式与本门店不符，请按新门店重新选择取餐或配送方式。')
+        labels={'pickup':'到店自取','drive':'得来速','delivery':'麦乐送'}
+        raise ValueError(('本次传入的方式' if explicit_mode else '沿用的方式')+'“'+labels.get(elements.get('fulfillment'),'所选方式')+'”与这家店的查询方式“'+labels.get(selected_store['fulfillment'],'门店方式')+'”不符，请按本次方式重新查询门店。')
     # Model-provided sources are never evidence of what the user said.
     trusted=previous.get('sources',{})
     for key,value in elements.items():
         if key=='sources':continue
         elements['sources'][key]=(trusted.get(key,'default') if active and previous.get(key)==value else
-            ('default' if trusted.get(key)=='default' else 'last') if previous.get(key)==value else 'default')
+            (trusted.get(key) if trusted.get(key) in {'default','nearest','account'} else 'last') if previous.get(key)==value else 'default')
     official=(await account_info()).structuredContent
     if incoming.get("account_last4") and incoming["account_last4"]!=official["account_last4"]:
         raise ValueError("账户后四位与本机授权账户不一致，请刷新账户信息")
@@ -242,7 +244,7 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     elements['sources']['account_name']='account'
     elements['sources']['account_last4']='account'
     if not elements['sources'].get('store_code'):
-        elements['sources']['store_code']='utterance' if (owner(t),store_code) in store_context else 'last' if memory.read(owner(t)).get('store_code')==store_code else 'utterance'
+        elements['sources']['store_code']='nearest' if (owner(t),store_code) in store_context else 'last' if memory.read(owner(t)).get('store_code')==store_code else 'default'
     if elements.get('fulfillment')=='delivery':
         addresses=(await upstream.call(t,'delivery-query-addresses',{}))['data']
         addresses=addresses if isinstance(addresses,list) else addresses.get('addresses',[])
@@ -521,7 +523,15 @@ async def local_url():
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None) -> CallToolResult:
-    """任意点餐原话的唯一入口。餐品按当前菜单解析；没定门店先保留原话，不重复问推荐。"""
+    """任意点餐原话的唯一入口，无需用 shell 读取 SKILL.md，完整协议由本工具返回。
+
+    每轮逐字传用户原话；按 next_tool 继续，只追问 missing。
+    原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，
+    再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。
+    收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。
+    报价完整展示后停等明确确认；place_orders 还须宿主审批，不得自主下单。
+    缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。
+    """
     import re
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
@@ -546,6 +556,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         resumed=await mcd_start(onboarding['utterance'],recommend,plan,ctx)
         data=resumed.structuredContent
         return result(data,'已连接。可以说“帮我配”“我自己点”或“外送到公司”。\n\n'+data['display_markdown'])
+    if onboarding.get('utterance'):
+        memory.write('onboarding',{})
     t=token();state=memory.read(owner(t))
     if utterance.strip().strip('。！!') in {'好了','选好了'}:
         sid=state.get('active_session','')
@@ -557,7 +569,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
             return await get_cart(sid,wait=0)
     previous={k:v for k,v in state.items() if k in {'elements','store_code','items'}}
     active=carts.get(state.get('active_session',''))
-    continuing=bool(active and not intent_text(utterance) and '麦当劳' not in utterance)
+    continuing=bool(active and not re.search(r'重新点|新的一单|再下一单|照上次那份|(?:我要吃|帮我点个)麦当劳',utterance))
     if continuing:
         previous={k:copy.deepcopy(active[k]) for k in ('elements','store_code','items') if k in active}
         plan=plan or active.get('plan')
@@ -566,7 +578,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if location:
         inferred['location']=location.group(1).removesuffix('附近')
         previous.pop('store_code',None)
-        previous['elements']={k:v for k,v in previous.get('elements',{}).items() if k not in {'addressId','delivery_address','reservationDate','sources'}}
+        previous['elements']={k:v for k,v in previous.get('elements',{}).items() if k not in {'addressId','delivery_address'}}
+        previous['elements']['sources']={k:v for k,v in previous['elements'].get('sources',{}).items() if k not in {'addressId','delivery_address','store_code'}}
     if any(w in utterance for w in ('外送','外卖','送到','麦乐送')):incoming['fulfillment']='delivery'
     elif '开车' in utterance or '得来速' in utterance:incoming['fulfillment']='drive'
     elif any(w in utterance for w in ('自取','去拿','到店')):incoming['fulfillment']='pickup'
@@ -587,20 +600,20 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     current_facts=copy.deepcopy(incoming)
     if continuing:
         old=previous.get('elements',{})
-        old_sources={k:('default' if old.get('sources',{}).get(k)=='default' else 'last') for k in old if k!='sources'}
+        old_sources={k:old.get('sources',{}).get(k,'default') for k in old if k!='sources'}
         incoming={**old,**incoming,'sources':{**old_sources,**{k:'utterance' for k in current_facts if k!='sources'}}}
     e=merge_elements(previous.get('elements',{}),incoming)
-    if previous.get('store_code'):e['sources']['store_code']='last'
+    if previous.get('store_code'):e['sources']['store_code']=active['elements'].get('sources',{}).get('store_code','default') if continuing else 'last'
     if incoming.get('fulfillment') and incoming['fulfillment']!=previous.get('elements',{}).get('fulfillment'):
         previous.pop('store_code',None)
     concrete=bool(intent_text(utterance)) and not intent_text(utterance).isdigit()
     if recommend is not None and plan is None:plan='帮我配' if recommend else '我自己点'
     if '帮我配' in utterance or '帮我推荐' in utterance:plan='帮我配'
-    elif '自己点' in utterance or '自己选' in utterance:plan='我自己点'
+    elif re.search(r'自己(?:来)?(?:点|选|看看菜单|看下菜单|看菜单)',utterance):plan='我自己点'
     elif concrete and plan is None:plan='我自己点'
     sid=state['active_session'] if continuing else secrets.token_urlsafe(24)
     cart={'owner':owner(t),'items':[],'elements':e,'store_code':previous.get('store_code'),'submitted':False,'location':inferred.get('location',''),'city':state.get('last_search',{}).get('city',''),'intent':utterance if concrete and plan!='帮我配' else '', 'plan':plan,'people':inferred.get('people')}
-    if continuing:
+    if continuing and not concrete:
         cart['items']=copy.deepcopy(active.get('items',[]))
         cart['intent']=active.get('intent','')
         cart['intent_resolved']=active.get('intent_resolved',False)
@@ -616,7 +629,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     reused=[]
     if e.get('sources',{}).get('fulfillment')=='last':reused.append(labels.get(e.get('fulfillment'),'')+'（沿用上次）')
     store=get_store_context(t,cart['store_code']) if cart['store_code'] else {}
-    if store:reused.append(store.get('storeName','上次门店')+'（沿用上次）')
+    if store:reused.append(store.get('storeName','所选门店')+'（'+('最近' if e['sources'].get('store_code')=='nearest' else '沿用上次' if not continuing else '默认')+'）')
     if e.get('sources',{}).get('addressId')=='last':reused.append('上次配送地址（沿用上次）')
     prefix='、'.join(reused)+('，现在送。' if e.get('fulfillment')=='delivery' else '，现在取。') if reused else ''
     if incoming.get('reservationDate'):
@@ -680,15 +693,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         text=f'[打开点餐页]({page}) — 选好点底部“选好了，去算最省”，选好会自动接着算；如果没接上，回来说一句“好了”。'
     if cart.get('intent_options'):
         data.update(next_tool='get_menu',reply_options=cart['intent_options']);text=cart['intent_question']
-    # Claude can discover MCP tools without loading an installed companion skill.
-    # Route the first entry through Skill explicitly; no hook is required.
-    if ctx is not None and not cart.get('skill_requested'):
-        client=getattr(getattr(ctx.session,'client_params',None),'clientInfo',None)
-        if 'claude' in str(getattr(client,'name','')).lower():
-            cart['skill_requested']=True
-            data.update(next_tool='Skill',skill='mcd-best-order:mcd-order',
-                after_skill_tool=data.get('next_tool'),
-                next_action='先调用 Skill(skill="mcd-best-order:mcd-order") 读取已安装的点餐技能，然后按本结果继续。')
+    data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待明确确认和宿主审批。全程中文，不对用户说英文元话。'
     carts[sid]=cart
     return result(data,text)
 
@@ -703,6 +708,8 @@ async def get_cart(session_id: str, wait: int = 0, link_displayed: bool = False)
     未发正文时先按返回的 handoff_correction 发正文，再以 true 调用。
     """
     cart=owned_cart(session_id)
+    if link_displayed:
+        cart['link_displayed']=True
     if cart.get('store_code') and not cart.get('submitted') and not cart.get('page_opened') and not link_displayed and not cart.get('handoff_checked'):
         # Give an already-emitted link time to open. This avoids repeating it
         # when an older host omits the explicit link_displayed acknowledgement.
@@ -726,9 +733,10 @@ async def get_cart(session_id: str, wait: int = 0, link_displayed: bool = False)
     elif cart.get('store_code') and not cart.get('page_opened'):
         # A successful empty poll can hide an omitted link indefinitely. Repeat
         # the fail-closed correction after a real timeout until the page opens.
-        cart['handoff_checked']=False
-        carts[session_id]=cart
-        return await get_cart(session_id,wait=0,link_displayed=False)
+        if not cart.get('link_displayed'):
+            cart['handoff_checked']=False
+            carts[session_id]=cart
+            return await get_cart(session_id,wait=0,link_displayed=False)
     return result({**{k:v for k,v in cart.items() if k not in {'owner','waiter_until'}},'next_tool':'quote_best' if cart['submitted'] else 'get_cart','wait':25},'收到：已按你选的规格取回餐品，正在算最省的下法……' if cart['submitted'] else '等你在页面里选好，选好会自动交回。')
 
 

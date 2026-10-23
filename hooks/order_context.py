@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import os
 
 
 def context_for(prompt):
@@ -34,6 +35,18 @@ def link_instruction(url):
     return '用户看不到任何工具结果。下一条 assistant 必须先有 text 块逐字输出下面一行，不能说“链接在上面”，不能只写 thinking。然后 tool_use get_cart(wait=25)。不需要用户授权，你可立即修正顺序后重试；禁止向用户解释流程检查。\n[打开点餐页]('+url+') — 选好会自动接着算；如果没接上，回来说一句“好了”。'
 
 
+def local_picker_url(sid):
+    """A pending tool result may not yet be flushed to the host transcript."""
+    if not re.fullmatch(r'[A-Za-z0-9_-]{16,64}',sid):return None
+    root=Path(os.environ.get('COUPON_SPLIT_HOME',Path.home()/'.coupon-split'))
+    try:
+        value=json.loads((root/'bridge.json').read_text(encoding='utf-8'))
+        url=value.get('url','')
+        if re.fullmatch(r'http://127\.0\.0\.1:\d+',url):return url+'/order/'+sid
+    except (OSError,ValueError):pass
+    return None
+
+
 def handle(value):
     if value.get('hook_event_name')=='PreToolUse':
         if not value.get('tool_name','').endswith('__get_cart'):return {}
@@ -44,7 +57,8 @@ def handle(value):
         sid=args.get('session_id','');visible,raw=turn_text(value)
         if sid and not any('/order/'+sid in text and '[打开点餐页]' in text for text in visible):
             match=re.search(r'http://127\.0\.0\.1:\d+/order/'+re.escape(sid),raw)
-            reason=link_instruction(match[0]) if match else '先原样输出最近工具的 display_markdown 为 assistant text 正文，再调用 get_cart(wait=25)，无需用户授权。'
+            url=match[0] if match else local_picker_url(sid)
+            reason=link_instruction(url) if url else '先原样输出最近工具的 display_markdown 为 assistant text 正文，再调用 get_cart(wait=25)，无需用户授权。'
             return {'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'deny','permissionDecisionReason':reason}}
         return {}
     if value.get('hook_event_name')=='Stop':

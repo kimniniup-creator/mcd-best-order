@@ -14,7 +14,7 @@ class OrderElements(BaseModel):
     takeWayName: str | None = None
     reservationDate: str | None = Field(default=None, validation_alias=AliasChoices('reservationDate', 'reservation_time', 'reservationTime'))
     needTableware: StrictBool | None = None
-    sources: dict[str, Literal['utterance', 'last', 'default', 'account']] = Field(default_factory=dict)
+    sources: dict[str, Literal['utterance', 'last', 'default', 'account', 'nearest']] = Field(default_factory=dict)
 
     @field_validator('reservationDate')
     @classmethod
@@ -71,7 +71,7 @@ def merge_elements(previous, incoming):
     incoming = normalize_elements(incoming)
     reusable = {'fulfillment', 'addressId', 'takeWayCode'}
     result = {k: v for k, v in previous.items() if k in reusable and v}
-    sources = {k: 'last' for k in result}
+    sources = {k: previous.get('sources', {}).get(k) if previous.get('sources', {}).get(k) in {'default','nearest','account'} else 'last' for k in result}
     result.update(reservationDate=None, needTableware=False)
     sources.update(reservationDate='default', needTableware='default')
     for k, v in incoming.items():

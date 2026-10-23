@@ -102,7 +102,7 @@ def quote_summary(plan, option_id="0"):
         elements=element_rows(plan),elements_pending=plan.get('elements_pending',[]),orders=orders,
         coverage=[dict(name=names.get(c,c),quantity=q,basis='same_code') for c,q in p['coverage'].items()],
         extras=[dict(name=names.get(c,c),quantity=q) for c,q in p['extras'].items()],
-        no_card={k:plan['no_card'][k] for k in ('option_id','price','savings')} if p.get('buys_card') and plan.get('no_card') else None,
+        no_card={k:plan['no_card'][k] for k in ('option_id','price','savings')} if p.get('buys_card') and plan.get('no_card',{}).get('savings',0)>0 else None,
         excluded_count=len(plan.get('exclusions',[])),next_tool='place_orders',
         reply_options=([{'n':i,'say':str(i),'does':v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐','take_way':v.get('code',v.get('takeWayCode'))} for i,v in enumerate(plan['take_options'],1)] if plan.get('take_options') else [{'n':1,'say':'1','does':'堂食并确认'},{'n':2,'say':'2','does':'外带并确认'}]) if plan.get('elements_pending') else [])
     return public(result)
@@ -166,7 +166,7 @@ def human_time(value, delivery=False, now=None):
 
 def element_rows(plan):
     e=plan.get('order_elements',{});sources=e.get('sources',{})
-    def row(key,label,value):return {'key':key,'label':label,'value':value,'mark':{'last':'沿用上次','default':'默认','utterance':'你说的'}.get(sources.get(key),'')}
+    def row(key,label,value):return {'key':key,'label':label,'value':value,'mark':{'last':'沿用上次','default':'默认','utterance':'你说的','nearest':'最近'}.get(sources.get(key),'')}
     delivery=e.get('fulfillment')=='delivery'
     result=[row('fulfillment','方式',{'pickup':'到店自取','drive':'得来速','delivery':'麦乐送'}.get(e.get('fulfillment'),'到店自取'))]
     if delivery:result.append(row('addressId','送到',e.get('delivery_address','所选地址')+'，'+plan.get('storeName','所选门店')+'配送'+(' · '+plan['distance'] if plan.get('distance') else '')))
@@ -224,7 +224,7 @@ def markdown(plan):
             rows += ['- 用券：'+('；'.join(o.get('coupons',[])) or '不用'),f"- 本单实付 **{money(o['price'])}**"]
         names=coverage_names(plan)
         rows += ['\n对得上你点的：'+' · '.join(f'{names.get(c,c)} ×{q}' for c,q in p['coverage'].items())+'；多出来的：'+('、'.join(f'{names.get(c,c)} ×{q}' for c,q in p['extras'].items()) or '无')]
-        if p.get('buys_card') and plan.get('no_card'):
+        if p.get('buys_card') and plan.get('no_card',{}).get('savings',0)>0:
             rows += [f"\n不想买卡：不买卡最低 {money(plan['no_card']['price'])}（省 {money(plan['no_card']['savings'])}），说“不买卡”换这个。"]
             if p.get('buys_card'):rows += [f"买卡后本单比不买卡再省 {money(plan['no_card']['price']-p['price'])}。"]
         if plan.get('take_options'):
