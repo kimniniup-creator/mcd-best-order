@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>连接麦当劳账户 · 最优下单</title>
+<link rel="stylesheet" href="/design/tokens.css">
+<link rel="stylesheet" href="/design/v2/v2.css">
+<script>try{var t=new URLSearchParams(location.search).get('theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+</head>
+<body>
+<!-- 首次授权页静态稿。真实地址：http://127.0.0.1:<随机端口>/setup，由 stdio MCP 进程临时提供。
+     状态：（空）待粘贴 | #bad Token 无效 | #ok 已连接 -->
+<header class="pk-top"><div class="pk-top__in" style="max-width:640px;padding:0 16px"><span class="brandmark">最优下单</span><span class="pk-top__from"><span>只在这台电脑上运行</span></span></div></header>
+
+<main class="ob">
+  <div class="ob__card">
+    <span class="mark mark--default">首次连接 / 重新授权</span>
+    <h1>连上你自己的麦当劳账户</h1>
+    <p class="ob__lede">大约 2 分钟。连好后，以后在对话里说一句想吃麦当劳就能直接点，用的是你自己的账户和你自己的券。</p>
+
+    <ol class="ob__steps">
+      <li class="ob__step" id="s1">
+        <h2>去麦当劳开放平台拿一个 Token</h2>
+        <p>Token 是麦当劳发给你个人的一串字符，有了它我们才能替你查菜单、算价格、下单。</p>
+        <div class="ob__how"><ol>
+          <li>打开 <b>open.mcd.cn</b> 的 MCP 页面，用手机号和验证码登录</li>
+          <li>点 <b>激活</b>，页面会出现你的 Token</li>
+          <li>点 <b>复制</b></li>
+        </ol></div>
+        <div class="ob__act"><a class="btn btn--sm" href="https://open.mcd.cn/mcp" target="_blank" rel="noreferrer">打开 open.mcd.cn ↗</a><span class="faint" style="font-size:var(--fs-xs)">新窗口打开，弄好再回到这页</span></div>
+      </li>
+
+      <li class="ob__step is-now" id="s2">
+        <h2>粘贴到这里</h2>
+        <div class="ob__form">
+          <label class="field" id="field"><span class="vh">Token</span><input id="tok" type="password" placeholder="粘贴刚才复制的 Token" autocomplete="off" spellcheck="false"><button class="btn btn--ghost btn--sm" type="button" id="eye" style="min-height:44px">显示</button></label>
+          <div class="hint">别发到对话里，也别发给别人。这一页不会把它交给 Agent。</div>
+          <div class="ob__err"><div class="hint hint--bad" id="authorize-error" role="alert">麦当劳账户授权失效，请重新授权。可能是复制少了几位，或者 Token 已过期，回到 open.mcd.cn 重新复制一次。</div></div>
+          <div class="ob__act"><button class="btn" type="button" id="save">保存到这台电脑</button></div>
+        </div>
+        <div class="ob__ok">
+          <p>已保存，校验通过。</p>
+        </div>
+      </li>
+
+      <li class="ob__step" id="s3">
+        <h2>回到对话</h2>
+        <p class="ob__form" style="margin:0">保存后会先用它查一次你的账户，确认能用。</p>
+        <div class="ob__ok">
+          <div class="ob__okbox">
+            <h2>已连上</h2>
+            <div class="ob__acct"><div><span>账户</span>正在核实本人账户</div><div><span>保存在</span>Windows 凭据管理器</div></div>
+          </div>
+          <div class="ob__back"><i aria-hidden="true"></i><div><b>回到对话，说一声"好了"</b><span class="faint" style="font-size:var(--fs-xs)">接着原来的点餐流程；也可以说“帮我配”“我自己点”或“外送到公司”。这个页面可以关掉了。</span></div></div>
+        </div>
+      </li>
+    </ol>
+
+    <div class="ob__safe"><i aria-hidden="true"></i><div><b>Token 只存在这台电脑上。</b>存进系统自带的凭据管理器（Mac 是钥匙串），不写进日志或对话记录；系统钥匙串不可用时，会按本机支持情况提示。我们不经手钱，付款永远在麦当劳官方页面完成。想停用，去 open.mcd.cn 重新生成即可让旧的作废。</div></div>
+  </div>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+$('#save').onclick=async()=>{const b=$('#save'),input=$('#tok');b.disabled=true;try{const r=await fetch('/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:input.value})}),v=await r.json();document.body.dataset.state=r.ok?'ok':'bad';$('#field').classList.toggle('field--bad',!r.ok);input.setAttribute('aria-invalid',String(!r.ok));if(r.ok){input.value='';$('#s1').className='ob__step is-ok';$('#s2').className='ob__step is-ok';$('#s3').className='ob__step is-now';$('#s3 .ob__okbox h2').textContent=v.message;$('#s3 .ob__acct').textContent='保存在：'+v.storage}else $('#authorize-error').textContent=v.message}catch{$('#authorize-error').textContent='本机连接失败，请重试';document.body.dataset.state='bad'}finally{b.disabled=false}};
+$('#eye').onclick=()=>{const i=$('#tok');i.type=i.type==='password'?'text':'password';$('#eye').textContent=i.type==='password'?'显示':'隐藏'};
+</script></body></html>

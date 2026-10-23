@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "coupon-split": {
+      "command": "sh",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/hooks/launch.sh",
+        "server"
+      ],
+      "env": {
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}

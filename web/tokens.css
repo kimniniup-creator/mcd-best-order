@@ -1,0 +1,157 @@
+/* coupon-split 视觉规范 · tokens.css
+ * 依据 docs/01-PRD.md v1 · design/brief.md
+ * 方向：一张会算账的小票。纸、墨、一抹"省钱绿"。
+ * 开发只引用变量，不在组件里写死颜色和字号。
+ * 深色：跟随宿主（prefers-color-scheme），宿主显式指定时用 [data-theme]。
+ */
+
+:root {
+  /* ---------- 颜色 · 浅色 ---------- */
+  --c-canvas:        #F3EFE7;  /* 宿主外的底，只在独立页（演示壳）用 */
+  --c-paper:         #FFFDF8;  /* 卡片底 */
+  --c-paper-sunk:    #F7F2E8;  /* 卡片内的凹陷区：明细、备选、图片底 */
+  --c-ink:           #1A1813;  /* 主文字、主按钮底 */
+  --c-ink-2:         #5B564C;  /* 次要文字 */
+  --c-ink-3:         #8F897C;  /* 辅助说明、划线价 */
+  --c-line:          #E7E0D2;  /* 分隔线、卡片描边 */
+  --c-line-strong:   #D3C9B6;  /* 虚线票据分隔、输入框描边 */
+  --c-on-ink:        #FFFDF8;  /* 主按钮上的文字 */
+
+  --c-save:          #0F7A4E;  /* 省钱绿：只用于"省 ¥X"和成功态 */
+  --c-save-ink:      #0B5E3C;  /* 省钱绿上的文字（小号） */
+  --c-save-tint:     #E3F2EA;  /* 省钱绿底 */
+  --c-fee:           #9A5B0E;  /* 卡费/需要注意的钱：琥珀 */
+  --c-fee-tint:      #FBEFD9;
+  --c-wait:          #3E5C94;  /* 进行中/待支付：靛蓝 */
+  --c-wait-tint:     #E6ECF7;
+  --c-fail:          #B3401A;  /* 失败/已回滚：朱 */
+  --c-fail-tint:     #F9E6DD;
+  --c-focus:         #3E5C94;
+
+  /* ---------- 字体 ---------- */
+  --f-text: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  /* 数字专用：等宽数位，偏 DIN 的工业感。Windows 自带 Bahnschrift，Mac 用 DIN Alternate / SF */
+  --f-num: "Bahnschrift", "DIN Alternate", "SF Pro Display", "Segoe UI", "Roboto Condensed", var(--f-text);
+
+  /* 字号阶梯（px）。手机与桌面同一套，只有 hero 数字在窄屏缩一级 */
+  --fs-hero:   64px;  /* "省 ¥52.10" 的数字 */
+  --fs-hero-m: 52px;
+  --fs-xl:     28px;  /* 实付金额 */
+  --fs-lg:     20px;  /* 卡片标题 */
+  --fs-md:     16px;  /* 正文、餐品名 */
+  --fs-sm:     14px;  /* 次要信息、按钮小字 */
+  --fs-xs:     12px;  /* 标签、脚注 */
+  --lh-tight:  1.15;
+  --lh-text:   1.55;
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-bold:    600;
+  --tracking-label: 0.08em; /* 小号大写标签 */
+
+  /* ---------- 间距（4 的倍数） ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* ---------- 圆角 ---------- */
+  --r-sm:   8px;   /* 标签、图片底 */
+  --r-md:   12px;  /* 内部分组 */
+  --r-lg:   18px;  /* 卡片 */
+  --r-pill: 999px; /* 按钮、步进器 */
+
+  /* ---------- 阴影（克制，纸放在桌上的感觉） ---------- */
+  --sh-card: 0 1px 0 rgba(26,24,19,.04), 0 8px 24px -12px rgba(26,24,19,.18);
+  --sh-pop:  0 2px 0 rgba(26,24,19,.04), 0 18px 40px -16px rgba(26,24,19,.28);
+
+  /* ---------- 卡片容器约束（宿主对话流） ---------- */
+  --card-max: 560px;   /* 富卡片最大宽 */
+  --card-min: 300px;   /* 低于此宽度宿主应改用 Markdown 降级 */
+  --card-pad: 20px;
+  --card-pad-m: 16px;
+  --tap-min: 44px;     /* 最小点击区域 */
+
+  /* ---------- 组件状态 ---------- */
+  --btn-bg:            var(--c-ink);
+  --btn-fg:            var(--c-on-ink);
+  --btn-bg-hover:      #2E2A22;
+  --btn-bg-press:      #000000;
+  --btn-bg-disabled:   #CFC8B9;
+  --btn-fg-disabled:   #8F897C;
+  --btn2-bg:           transparent;
+  --btn2-fg:           var(--c-ink);
+  --btn2-line:         var(--c-line-strong);
+  --btn2-bg-hover:     var(--c-paper-sunk);
+  --focus-ring:        0 0 0 3px color-mix(in srgb, var(--c-focus) 35%, transparent);
+
+  --dur-fast: 120ms;
+  --dur-mid:  220ms;
+  --ease:     cubic-bezier(.2,.7,.2,1);
+
+  color-scheme: light;
+}
+
+/* ---------- 深色：跟随系统，除非宿主显式指定浅色 ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --c-canvas:      #12110E;
+    --c-paper:       #1C1A16;
+    --c-paper-sunk:  #24211C;
+    --c-ink:         #F3EEE3;
+    --c-ink-2:       #BDB6A7;
+    --c-ink-3:       #8A8374;
+    --c-line:        #322E27;
+    --c-line-strong: #474136;
+    --c-on-ink:      #15130F;
+    --c-save:        #45D39A;
+    --c-save-ink:    #7FE3B8;
+    --c-save-tint:   #15302A;
+    --c-fee:         #E7A954;
+    --c-fee-tint:    #33270F;
+    --c-wait:        #93AEE6;
+    --c-wait-tint:   #1D2538;
+    --c-fail:        #F08A63;
+    --c-fail-tint:   #3A2018;
+    --c-focus:       #93AEE6;
+    --btn-bg-hover:  #FFFFFF;
+    --btn-bg-press:  #D9D2C3;
+    --btn-bg-disabled:#3A362E;
+    --btn-fg-disabled:#7A7466;
+    --sh-card: 0 1px 0 rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.7);
+    --sh-pop:  0 2px 0 rgba(0,0,0,.3), 0 20px 44px -16px rgba(0,0,0,.8);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --c-canvas:      #12110E;
+  --c-paper:       #1C1A16;
+  --c-paper-sunk:  #24211C;
+  --c-ink:         #F3EEE3;
+  --c-ink-2:       #BDB6A7;
+  --c-ink-3:       #8A8374;
+  --c-line:        #322E27;
+  --c-line-strong: #474136;
+  --c-on-ink:      #15130F;
+  --c-save:        #45D39A;
+  --c-save-ink:    #7FE3B8;
+  --c-save-tint:   #15302A;
+  --c-fee:         #E7A954;
+  --c-fee-tint:    #33270F;
+  --c-wait:        #93AEE6;
+  --c-wait-tint:   #1D2538;
+  --c-fail:        #F08A63;
+  --c-fail-tint:   #3A2018;
+  --c-focus:       #93AEE6;
+  --btn-bg-hover:  #FFFFFF;
+  --btn-bg-press:  #D9D2C3;
+  --btn-bg-disabled:#3A362E;
+  --btn-fg-disabled:#7A7466;
+  --sh-card: 0 1px 0 rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.7);
+  --sh-pop:  0 2px 0 rgba(0,0,0,.3), 0 20px 44px -16px rgba(0,0,0,.8);
+  color-scheme: dark;
+}

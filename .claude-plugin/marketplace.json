@@ -1,0 +1,13 @@
+{
+  "name": "mcd-best-order-marketplace",
+  "owner": {
+    "name": "kimniniup-creator"
+  },
+  "plugins": [
+    {
+      "name": "mcd-best-order",
+      "source": "./",
+      "description": "麦当劳点餐与核价"
+    }
+  ]
+}
