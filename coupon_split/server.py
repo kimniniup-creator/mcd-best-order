@@ -522,6 +522,11 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     url=await local_url()
+    global UPSTREAM_TOKEN
+    if not credential.get() and memory.read('onboarding').get('utterance'):
+        # The authorization page is served by another process. Recover its newly
+        # saved credential before checking the old in-memory value.
+        UPSTREAM_TOKEN=load_token(prefer_saved=True)
     if not (credential.get() or UPSTREAM_TOKEN):
         memory.write('onboarding',{'utterance':utterance})
         return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'先连上你自己的麦当劳账户，大约 2 分钟：[打开授权页]({url}/setup)。弄好后回来说一声就行。')
@@ -529,6 +534,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         await upstream.call(token(),'query-my-account',{})
     except ValueError as exc:
         if '授权失效' not in str(exc):raise
+        memory.write('onboarding',{'utterance':utterance})
         return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'麦当劳账户授权已失效，请重新连接：[打开授权页]({url}/setup)。保存后回来说“好了”，继续点餐。')
     onboarding=memory.read('onboarding')
     if onboarding.get('utterance') and utterance.strip().strip('。！!')=='好了':

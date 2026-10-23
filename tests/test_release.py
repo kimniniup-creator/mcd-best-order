@@ -102,3 +102,26 @@ async def test_host_approval_metadata():
     assert tool.meta['anthropic/requiresUserInteraction'] is True
     assert tool.annotations.destructiveHint and not tool.annotations.readOnlyHint
     assert 'user_confirmation' in tool.inputSchema['required']
+
+
+async def test_new_authorization_is_recovered_without_server_restart(tmp_path,monkeypatch):
+    from coupon_split import server as s
+    from coupon_split.local import LocalState,CartStore
+    class Account:
+        async def call(self,token,name,args):
+            assert token=='fixture-new' and name=='query-my-account'
+            return {'data':{'accountId':'fixture-xxxx'}}
+    async def url():return 'http://127.0.0.1:1'
+    monkeypatch.setattr(s,'local_url',url)
+    monkeypatch.setattr(s,'memory',LocalState(tmp_path/'memory'))
+    monkeypatch.setattr(s,'carts',CartStore(tmp_path/'carts.db'))
+    monkeypatch.setattr(s,'UPSTREAM_TOKEN','')
+    monkeypatch.setattr(s,'upstream',Account())
+    ctx=s.credential.set('')
+    try:
+        assert (await s.mcd_start('我要吃麦当劳')).structuredContent['stage']=='setup'
+        monkeypatch.setattr(s,'load_token',lambda prefer_saved=False:'fixture-new')
+        resumed=(await s.mcd_start('好了')).structuredContent
+        assert resumed['stage']=='ask' and '可以说' in resumed['display_markdown']
+        assert 'session_id' in resumed
+    finally:s.credential.reset(ctx)

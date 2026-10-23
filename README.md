@@ -86,3 +86,5 @@ uvx --from git+https://github.com/kimniniup-creator/mcd-best-order.git coupon-sp
 Claude 对话执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 终端执行 `codex plugin remove mcd-best-order@mcd-best-order-marketplace`。清除凭据不会删除购物车；确认不需要历史后，手动删除自己的 `~/.coupon-split/`（或自己设置的 `COUPON_SPLIT_HOME`）。Codex 的本插件策略表可保留，不会在卸载后运行。去开放平台重新生成 Token 可使旧 Token 作废。
 
 版权：保留所有权利，见 LICENSE。项目与麦当劳无隶属关系。
+
+当前为验收候选版。真实下单、撤回与退券的完整闭环尚未通过本轮实测；仓库可安装不代表整体验收通过。

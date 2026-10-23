@@ -14,8 +14,8 @@ def state_dir():
     return root
 
 
-def load_token():
-    if os.environ.get('MCD_MCP_TOKEN'):
+def load_token(prefer_saved=False):
+    if not prefer_saved and os.environ.get('MCD_MCP_TOKEN'):
         return os.environ['MCD_MCP_TOKEN']
     try:
         import keyring
@@ -24,9 +24,9 @@ def load_token():
             return value
     except Exception:
         pass
-    if os.name=='nt':return ''
+    if os.name=='nt':return os.environ.get('MCD_MCP_TOKEN','')
     file = state_dir()/'credential'
-    return file.read_text(encoding='utf-8') if file.exists() else ''
+    return file.read_text(encoding='utf-8') if file.exists() else os.environ.get('MCD_MCP_TOKEN','')
 
 
 def save_token(value):
