@@ -1,102 +1,138 @@
-# mcd-best-order · 麦当劳点餐助手
+# 麦当劳点餐助手
 
-在 Claude Code 或 Codex 里说想吃什么，用自己的麦当劳账户查门店、选餐、比较同规格价格，确认后下单。
+在 Claude Code 或 Codex 里查门店、选餐、比较同规格价格，用你自己的麦当劳账户点餐。
 
-```text
-你：来份麦辣鸡腿堡，到店自取，外带
-助手：照原样 ¥25.00 → 实付 ¥20.00 · 1 单 · 付 1 次
-      用券：本人可用券；规格、门店、餐具和时间逐项展示
-      回复“确认”后，宿主弹出审批；通过后返回官方支付链接
-```
+安装：先准备下面的条件，再复制对应的 Claude 两行或 Codex 三段命令。
 
-以上为虚构文字示例，实际价格以当前门店和本人账户核价为准。只支持中国大陆麦当劳。
+装好后说：**我自己点，在北京望京中街附近，到店自取，外带。**（把地点换成你的位置）
 
-## 安装
+**默认会真实下单，需要你在对话里说“确认”，Claude Code 或 Codex 弹窗时点允许。** 报价后不会自动下单。想先试用，在安装前开启[模拟模式](#先试用模拟模式)。
 
-先准备已登录的 Claude Code 或 Codex CLI、Git 和 uv。无需自己安装 Python，uv 会准备所需版本。Windows 的 Git 安装选项需将 Git 和 Unix 工具加入 PATH（终端里 `git --version`、`sh --version` 都能运行）。
+## 安装前准备
 
-缺 uv 时启动脚本会给出安装提示，不会自行安装。你同意安装后，在自己的终端运行一行：
+- 已安装并登录 Claude Code 或支持 `codex plugin` 命令的 Codex。
+- 已安装 uv。无需另装 Python，uv 会准备所需版本。各系统任选对应的一行：
+
+  Windows PowerShell：
+
+  ```powershell
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+
+  macOS：
+
+  ```sh
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  Linux：
+
+  ```sh
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  **安装后重开终端**，运行 `uv --version` 确认。
+- 能访问 GitHub；第一次安装需要下载文件。
+- 已安装 [Git](https://git-scm.com/downloads)。Windows 安装时选择把 Git 和 Unix 工具加入 PATH；`git --version`、`sh --version` 都应能运行。
+
+## 先试用：模拟模式
+
+在你启动 Claude Code 或 Codex 的**同一个终端**执行，再从这里启动程序并新开对话：
+
+PowerShell：
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+$env:COUPON_SPLIT_SIMULATE = 'true'
 ```
 
 macOS / Linux：
 
 ```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
+export COUPON_SPLIT_SIMULATE=true
 ```
 
-安装后重开终端，确认 `uv --version`。uv 安装来源：[官方安装指南](https://docs.astral.sh/uv/getting-started/installation/)。**首次约 1 分钟**，会下载 Python 和依赖；后续使用固定 0.5.0 wheel 的 uvx 缓存，不再逐会话解析 GitHub 源码并构建。
+模拟模式仍用自己的账户读取门店、菜单和价格，但不会创建订单或支付链接。准备真实使用时，把值改成 `false`，退出程序再重新启动。
 
-Claude Code CLI / VS Code 扩展，在 Claude 对话中执行这两行，然后新开对话：
+## Claude Code 安装
+
+在 Claude Code 对话里依次执行这两行，然后新开对话：
 
 ```text
 /plugin marketplace add kimniniup-creator/mcd-best-order
 /plugin install mcd-best-order@mcd-best-order-marketplace
 ```
 
-**Claude 必须使用完整插件方式安装。** 单独 MCP + skill 缺少生命周期钩子，网页交接不可靠。首次使用时审阅并信任本插件 hooks；不要关闭下单审批。
+第一次使用时审阅并信任插件附带的检查脚本。它会核对下单前最后一条用户消息。不要关闭下单审批。首次启动正在准备时，稍候再说一次原话；持续失败请检查 uv 和网络。
 
-Codex CLI，在终端执行这两行，然后新开对话：
+## Codex 安装
 
-```sh
+在终端依次复制以下三段，PowerShell 5 也可以逐段执行：
+
+```text
 codex plugin marketplace add kimniniup-creator/mcd-best-order
-codex plugin add mcd-best-order@mcd-best-order-marketplace && uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
-第二行自动配置本插件：只让本机报价工具自动通过；下单、撤回、支付状态保留宿主审批。保留其他插件配置，不需手改 TOML。PowerShell 5 不支持 `&&` 时，将第二行中的两条命令分两行运行。需使用支持 `codex plugin` 的新版 CLI；插件安装后重新开启会话。交互式 Codex 弹出读取或工具审批时，**弹出时点允许**。点餐工具自带完整协议，无需通过 shell 读取 SKILL.md。宿主策略参见 [OpenAI 插件文档](https://developers.openai.com/plugins/build/plugins#configure-installed-server-policy)。
-
-Codex IDE 没有插件入口时，可在终端运行以下一条命令，自动注册 MCP 并安装 skill；此路径的交接验证是 CLI 非交互模拟，实际 IDE 面板仍需现场验收：
-
-```sh
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split setup --host codex-ide --apply
+```text
+codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
-公开仓库和 wheel 不需要申请仓库权限。Git/uv 未装时先补齐；遇到 Git 的“找不到命令”先检查 PATH，遇到下载失败先检查网络，不要索要作者私有仓库权限。Claude 第一个会话工具尚未连上时会提示“服务启动中，请稍候再说一次”；稍候重说原话即可。
-
-## 首次授权与点餐
-
-准备好已登录宿主、Git 和 uv 后，从安装到首报价共 6 步（上面两行安装算前两步；PowerShell 5 拆行执行仍为同一安装步骤）：
-
-1. 添加公开 marketplace（上面的第一行）。
-2. 安装插件（第二行；Codex 自动 setup 包含在此步）。新开对话。
-3. 说“我要吃麦当劳”，打开助手给的 **本机授权页**。
-4. 去 `open.mcd.cn` 的 MCP 页面，手机验证码登录，激活并复制自己的 Token。
-5. 回本机授权页粘贴，点“保存到这台电脑”，确认连接成功。空值、无效或过期会显示原因。
-6. 回对话说“好了，我自己点，在某城市某地标附近，到店自取，外带”，打开点餐页选好并提交；助手自动给首报价，不再要求重复说明。可以把地点、餐具、预约一起说。
-
-不要把 Token 发进聊天。Token 过期时会给出重新授权链接，按以上步骤重新保存。每位用户使用自己的账户和券。Windows 存入凭据管理器；macOS 存入钥匙串。其他系统无可用钥匙串时才使用仅本人可读的本机凭据文件，页面会说明保存位置。Token 仅用于访问麦当劳官方服务，不上传到插件仓库或作者服务器，不记入聊天和产品日志。
-
-“我自己点”会打开本机网页；选好点“选好了，去算最省”，助手会继续报价。如果没接上，说“好了”恢复。网页随机端口只在会话运行时可用，购物车可恢复24小时，不要转发本机点餐链接。外送只能选已有地址；没有可配送门店时换已有地址或改到店自取。
-
-## 确认、付款与撤回
-
-默认允许真实下单，但必须同时满足：对话中明确确认、有效的10分钟确认凭证、宿主审批通过、下单前餐品数量/规格/金额复核通过。报价后不会自动下单。**总额超过 ¥200，还要追加回复“确认下单 ¥实际金额”，保留两位小数。** 宿主没有审批能力或拒绝审批时停止，不能绕过。
-
-下单后支付卡包含麦当劳官方支付链接和手机 App 跳转链接，15分钟内付款。钱直接付给麦当劳，我们不经手。多单会明确说明需付几次。想撤回就在对话说“撤回订单”，等待已取消及退券核验；已支付订单不能作为待付单自动撤回。结果不明时先核对状态，切勿再次下单。
-
-演示时在启动宿主前设置 `COUPON_SPLIT_SIMULATE=true`（PowerShell：`$env:COUPON_SPLIT_SIMULATE='true'`），重启会话即可模拟，不创建订单或支付链接。旧环境变量 `ALLOW_REAL_ORDERS=false` 同样关闭真实下单。
-
-## 常见问题
-
-- **装不上 / 找不到 uv 或 sh**：先检查 `git --version`、`sh --version`、`uv --version`；重开终端。Git 未装时先从 [git-scm.com](https://git-scm.com/downloads) 安装。市场报错时检查网络和插件名，重新执行 marketplace add，再 install / add；不要把命令里的市场名改成私有仓库。Claude 可用 `/plugin` 查看 Errors，Codex 可用 `codex plugin list` 检查。
-- **授权失败**：确认复制完整 Token；已过期就在开放平台重新生成，再回本机页保存。连接服务失败稍后再试；Windows 凭据管理器不可用时先修复 keyring，不把凭据发给助手。
-- **没有可配送门店**：换账户内已有地址，或改到店自取；插件不创建地址。
-- **想撤回订单**：说“撤回订单”，等助手确认状态；券可能稍后退回，要以核验结果为准。
-- **隐私与地区**：凭据只保存在本机；仅支持中国大陆麦当劳。不要转发点餐/支付链接或本机状态目录。
-- **限制**：价格随门店、时段、账户券变化；候选搜索有次数上限，不保证全局最低。验证码、官方支付由你自己完成。
-
-## 卸载与清除本机数据
-
-先结束正在点餐的会话。在卸载插件之前，清除本机凭据：
-
-```sh
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl coupon-split forget-credential --apply
+```text
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.1/coupon_split-0.5.1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
-Claude 对话执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 终端执行 `codex plugin remove mcd-best-order@mcd-best-order-marketplace`。清除凭据不会删除购物车；确认不需要历史后，手动删除自己的 `~/.coupon-split/`（或自己设置的 `COUPON_SPLIT_HOME`）。Codex 的本插件策略表可保留，不会在卸载后运行。去开放平台重新生成 Token 可使旧 Token 作废。
+最后一步准备点餐服务，并仅为本插件设置报价和下单审批。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单、撤回和支付状态查询都保留逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
 
-版权：保留所有权利，见 LICENSE。项目与麦当劳无隶属关系。
+如果 Codex 编辑器扩展没有插件安装入口，可在终端执行这一段，再新开对话：
 
-当前为 0.5.0 验收候选版。引擎层真实自测已通过：到店单品一单、取得官方支付卡、不付款、立即撤回，订单列表只读确认已取消。账户当时无可用券，退券闭环未验证。宿主审批框留给同事在交互界面验收；引擎层检查不代替交互审批验收。
+```text
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.1/coupon_split-0.5.1-py3-none-any.whl coupon-split setup --host codex-ide --apply
+```
+
+## 连账户，开始点餐
+
+1. 说：`我自己点，在北京望京中街附近，到店自取，外带。` 把地名换成你的位置。
+2. 第一次会给本机授权页。打开后，去 [麦当劳开放平台](https://open.mcd.cn/mcp) 用手机号和验证码登录，激活并复制自己的 Token。
+3. 回本机授权页粘贴，点“保存到这台电脑”。**不要把 Token 发进聊天**。
+4. 回对话说“好了”。在点餐页选好，点“选好了，去算最省”，助手自动接着报价。
+
+也可以直接说“来份麦辣鸡腿堡，到店自取，外带，在北京望京中街附近”，或说“帮我配”。时间默认现在取；预约时请说清日期和钟点。外送只能选账户里已有的地址。
+
+凭据保存在本机系统凭据管理器；macOS 是钥匙串。其他系统无法使用钥匙串时，会提示仅本人可读的文件位置。凭据不交给作者、不进入聊天或产品日志。失效后按新授权页重新保存。
+
+新对话从空购物车开始；想继续未下单的一份，明确说“继续刚才”。说“照上次”只沿用已创建过订单的那一份；只报价没下单的不算。点餐链接是本机临时链接，不能转发，过期后重新说“我自己点”。
+
+## 确认、付款、撤回
+
+- 先核对报价里的门店、规格、数量、餐具和时间，再回复“确认”。总额超过 ¥200 时，回复报价给出的完整句子，例如 `确认下单 ¥201.00`，金额保留两位小数。随后在允许弹窗里核对并点允许。
+- 下单后打开官方支付链接，15 分钟内付款；手机可跳到麦当劳 App。钱直接付给麦当劳。拆成多单时会告诉你要付几次。
+- 想撤回就说“撤回订单”，等助手确认已取消及券是否退回。已付款订单请按麦当劳官方规则处理。结果不明时先查状态，不要重复下单。
+
+## 装坏了怎么恢复
+
+如果 Codex 点餐启动异常，在普通终端执行：
+
+```text
+codex plugin remove mcd-best-order@mcd-best-order-marketplace
+```
+
+然后重开 Codex，可以继续其他对话。补好 uv、重开终端后，再按安装步骤安装。通过编辑器扩展专用命令安装的版本，运行 `codex mcp remove coupon-split` 移除。
+
+Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`，补好 uv 和网络后重新安装。不会自动替你安装软件。
+
+## 国内访问 GitHub 慢怎么办
+
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.5.1 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.5.1)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从本机缓存启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+
+## 卸载与清除凭据
+
+结束点餐对话后，先在终端清除本机凭据：
+
+```text
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.1/coupon_split-0.5.1-py3-none-any.whl coupon-split forget-credential --apply
+```
+
+Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。清除凭据不会删除购物车；无需保留历史时，可自行删除自己的 `~/.coupon-split/` 目录（或自己设定的 `COUPON_SPLIT_HOME`）。在开放平台重新生成 Token 可以让旧凭据作废。
+
+仅支持中国大陆麦当劳。价格随门店、时段和本人账户变化，搜索次数有限，不保证全局最低。验证码和付款由你本人完成。
+
+版权：保留所有权利，见 LICENSE。本项目与麦当劳无隶属关系。

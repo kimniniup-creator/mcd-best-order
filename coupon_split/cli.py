@@ -9,7 +9,7 @@ import tomllib
 import sys
 from pathlib import Path
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.0/coupon_split-0.5.0-1-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.5.1/coupon_split-0.5.1-py3-none-any.whl'
 
 
 def configure_codex(plugin=True):
@@ -19,6 +19,14 @@ def configure_codex(plugin=True):
     path=root/'config.toml'
     original=path.read_text(encoding='utf-8') if path.exists() else ''
     tomllib.loads(original)
+    before=original
+    if not plugin:
+        blocks=[]
+        for block in re.split(r'(?=^\[)',original,flags=re.M):
+            if block.splitlines() and block.splitlines()[0].strip()=='[mcp_servers.coupon-split]':
+                block=re.sub(r'^required\s*=.*$', 'required = false',block,flags=re.M)
+            blocks.append(block)
+        original=''.join(blocks)
     prefix='plugins."mcd-best-order@mcd-best-order-marketplace".mcp_servers.coupon-split' if plugin else 'mcp_servers.coupon-split'
     policies={prefix:('default_tools_approval_mode','auto'),prefix+'.tools.quote_best':('approval_mode','approve')}
     for tool in ('place_orders','cancel_plan','pay_card'):
@@ -26,6 +34,7 @@ def configure_codex(plugin=True):
     config=tomllib.loads(original)
     existing=(config.get('plugins',{}).get('mcd-best-order@mcd-best-order-marketplace',{}) if plugin else config).get('mcp_servers',{}).get('coupon-split',{})
     if existing.get('default_tools_approval_mode')=='auto' and existing.get('tools',{}).get('quote_best',{}).get('approval_mode')=='approve' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan','pay_card')):
+        if original!=before:path.write_text(original,encoding='utf-8')
         print('本插件报价与写操作审批策略已配置。')
         return
     sections=[]
@@ -47,17 +56,21 @@ def configure_codex(plugin=True):
 def preflight():
     """Prepare the MCP entry point before a cold Codex conversation starts."""
     import asyncio
+    import logging
+    logging.getLogger('mcp').setLevel(logging.ERROR)
     from mcp import ClientSession,StdioServerParameters
     from mcp.client.stdio import stdio_client
     async def check():
         params=StdioServerParameters(command=sys.executable,args=['-m','coupon_split.stdio'],env=dict(os.environ))
-        async with stdio_client(params) as (read,write):
+        async with stdio_client(params,errlog=quiet) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
                 tools=await session.list_tools()
                 if not any(tool.name=='mcd_start' for tool in tools.tools):raise RuntimeError('缺少点餐入口')
     print('正在准备点餐服务，首次需要下载依赖；不会查询账户或下单。',flush=True)
-    try:asyncio.run(asyncio.wait_for(check(),timeout=180))
+    try:
+        with open(os.devnull,"w") as quiet:
+            asyncio.run(asyncio.wait_for(check(),timeout=180))
     except Exception:raise SystemExit('点餐服务启动检查失败；请检查 uv、Git 和网络后重新执行安装第二行。') from None
     print('点餐服务已准备好。请新开 Codex 会话，说“我要吃麦当劳”。')
 
@@ -91,7 +104,8 @@ def main():
     if args.host=='claude-code':
         raise SystemExit('Claude 请用插件安装：/plugin marketplace add kimniniup-creator/mcd-best-order，然后 /plugin install mcd-best-order@mcd-best-order-marketplace')
     if args.host=='codex-ide':
-        command=['codex','mcp','add','coupon-split','--','uvx','--python','3.14','--from',SOURCE,'coupon-split-mcp']
+        launcher=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))/'hooks/launch.sh'
+        command=['codex','mcp','add','coupon-split','--','sh',str(launcher),'server']
         target=Path.home()/'.agents/skills/mcd-order/SKILL.md'
     else:
         command=['claude','mcp','add','--scope','user','coupon-split','--','uvx','--from',SOURCE,'coupon-split-mcp']
@@ -107,6 +121,13 @@ def main():
         raise SystemExit('已有不同版本 skill，保留原文件；请先自行核对版本。')
     executable=shutil.which(command[0])
     if not executable:raise SystemExit('未找到宿主命令，请先安装宿主 CLI。')
+    if args.host=='codex-ide':
+        launcher.parent.mkdir(parents=True,exist_ok=True)
+        source_launcher=Path(__file__).parent/'assets/hooks/launch.sh'
+        if not source_launcher.exists():source_launcher=Path(__file__).parent.parent/'hooks/launch.sh'
+        shutil.copyfile(source_launcher,launcher)
+        # Keep the bundled relative hooks directory for the fast discovery proxy.
+        shutil.copytree(source_launcher.parent,launcher.parent,dirs_exist_ok=True)
     subprocess.run([executable,*command[1:]],check=True)
     target.parent.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(source,target)
@@ -115,7 +136,7 @@ def main():
         path=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))/'config.toml'
         text=path.read_text(encoding='utf-8')
         header='[mcp_servers.coupon-split]'
-        block='required = true\nstartup_timeout_sec = 120\nenv_vars = ["MCD_MCP_TOKEN", "COUPON_SPLIT_HOME", "ALLOW_REAL_ORDERS", "COUPON_SPLIT_SIMULATE", "UV_CACHE_DIR", "PYTHON_KEYRING_BACKEND"]\n'
+        block='required = false\nstartup_timeout_sec = 120\nenv_vars = ["MCD_MCP_TOKEN", "COUPON_SPLIT_HOME", "ALLOW_REAL_ORDERS", "COUPON_SPLIT_SIMULATE", "UV_CACHE_DIR", "PYTHON_KEYRING_BACKEND"]\n'
         # codex mcp add just created this section; remove only owned settings
         # so repeated setup remains valid TOML and keeps existing credentials.
         sections=[]

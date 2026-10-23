@@ -45,8 +45,10 @@ def parse_time(text, now=None):
         raise TimeClarification('请说清楚预约日期和时间，例如“明天中午12点半”；几点是上午还是下午？')
     if unsupported:ask()
     if immediate:
-        if clocks or dates or periods or '预约' in text: ask()
+        if clocks or dates or periods or ('预约' in text and not re.search(r'不预约|无需预约|不用预约',text)): ask()
         return True, None
+    if periods and not clocks and not dates and '预约' not in text:
+        return False, None
     if len(clocks) != 1 or len(dates) > 1 or len(periods) > 1: ask()
     if re.search(r'左右|大概|或者|或|到\d|至\d|多点|点多|点钟后|点以后|前', text): ask()
     period = periods[0] if periods else ''

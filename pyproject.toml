@@ -1,6 +1,6 @@
 [project]
 name = "coupon-split"
-version = "0.5.0"
+version = "0.5.1"
 requires-python = ">=3.14"
 dependencies = [
     "mcp>=1.28.1,<2",
@@ -36,3 +36,4 @@ include = ["coupon_split", "web", "skills", "hooks", ".claude-plugin", ".mcp.jso
 "web" = "coupon_split/assets/web"
 
 "skills" = "coupon_split/assets/skills"
+"hooks" = "coupon_split/assets/hooks"

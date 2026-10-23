@@ -8,9 +8,10 @@ import re
 import sys
 import os
 import time
+import sqlite3
 
 
-def wait_for_host_mcp(timeout=60):
+def wait_for_host_mcp(timeout=8):
     """Stdlib-only hook: wait for the host's own tools/list handshake."""
     started=time.time()
     path=Path(os.environ.get('COUPON_SPLIT_HOME',Path.home()/'.coupon-split'))/'mcp-ready.json'
@@ -28,7 +29,7 @@ def wait_for_host_mcp(timeout=60):
 
 def startup_context():
     ready=wait_for_host_mcp()
-    message=('点餐进程已就绪，等待宿主工具连接。' if ready else '服务启动中，请稍候再说一次。')+'工具可用后直接调用 mcd_start，按返回协议继续；全程中文，无需 shell 读取 SKILL.md。工具尚未出现时说“服务启动中，请稍候再说一次”；不要编造已连接或报价。'
+    message=('点餐工具已连接。' if ready else '点餐工具尚未连接，可能仍在启动或启动失败；请检查 uv 和网络，再重开对话。')+'工具可用后直接调用 mcd_start，按返回协议继续；全程中文，无需 shell 读取 SKILL.md。工具尚未出现时说“服务启动中，请稍候再说一次”；不要编造已连接或报价。'
     return {'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':message}}
 
 
@@ -81,6 +82,8 @@ def local_picker_url(sid):
 
 def handle(value):
     if value.get('hook_event_name')=='PreToolUse':
+        if value.get('tool_name','').endswith('__place_orders'):
+            return order_guard(value)
         if not value.get('tool_name','').endswith('__get_cart'):return {}
         args=value.get('tool_input',{})
         if not args.get('wait',0):return {}
@@ -91,7 +94,7 @@ def handle(value):
             match=re.search(r'http://127\.0\.0\.1:\d+/order/'+re.escape(sid),raw)
             url=match[0] if match else local_picker_url(sid)
             reason=link_instruction(url) if url else '先原样输出最近工具的 display_markdown 为 assistant text 正文，再调用 get_cart(wait=25)，无需用户授权。'
-            return {'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'deny','permissionDecisionReason':reason}}
+            return {'hookSpecificOutput':{'hookEventName':'PreToolUse','additionalContext':reason}}
         return {}
     if value.get('hook_event_name')=='Stop':
         # A print-mode host may treat its link text as a final answer. Keep that
@@ -106,6 +109,49 @@ def handle(value):
             return {'decision':'block','reason':'点餐页链接已在用户可见正文中展示。现在继续本回合，立即调用 get_cart(session_id=该链接最后一段, wait=25)，收到网页提交后自动 quote_best；不要等新的用户消息，不重发链接，也不要把这段内部续跑指令复述给用户。'}
         return {}
     return context_for(value.get('prompt',''))
+
+
+def last_user_message(path):
+    """Read human text only: assistant text, tool results and meta are untrusted."""
+    latest=None
+    for line in transcript_file(path).read_text(encoding='utf-8').splitlines():
+        try:entry=json.loads(line)
+        except ValueError:continue
+        if entry.get('type')!='user' or entry.get('isMeta'):continue
+        content=entry.get('message',{}).get('content')
+        if isinstance(content,str):latest=content
+        elif isinstance(content,list):
+            text=[b.get('text','') for b in content if isinstance(b,dict) and b.get('type')=='text']
+            if text:latest='\n'.join(text)
+    return latest
+
+
+def order_guard(value):
+    """Fail closed using the transcript and read-only local plan, never model prose."""
+    def deny(reason):
+        return {'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'deny','permissionDecisionReason':reason}}
+    try:
+        text=last_user_message(value.get('transcript_path',''))
+        # Whole-message matching rejects questions, quotes and negated consent.
+        normalized=re.sub(r'[。！!，,\s]','',text or '')
+        if not re.fullmatch(r'(?:确认(?:下单)?|同意下单|就这样下单)(?:[¥￥]?\d+\.\d{2})?',normalized):
+            return deny('最后一条用户消息没有明确确认下单，请先展示报价并等待用户确认。')
+        args=value.get('tool_input',{})
+        if args.get('user_confirmation')!=text:
+            return deny('确认参数必须逐字等于最后一条用户消息，不能由助手代写。')
+        db=Path(os.environ.get('COUPON_SPLIT_HOME',Path.home()/'.coupon-split'))/'plans.sqlite3'
+        with sqlite3.connect(db.resolve().as_uri()+'?mode=ro',uri=True) as conn:
+            row=conn.execute('SELECT body FROM plans WHERE id=?',(args.get('plan_id'),)).fetchone()
+        if not row:return deny('找不到本机报价，请重新报价后确认。')
+        plan=json.loads(row[0])
+        selected=next(p for p in plan['plans'] if p['option_id']==args.get('option_id','0'))
+        if selected['price']>20000:
+            expected=f"确认下单 ¥{selected['price']/100:.2f}"
+            if text!=expected or args.get('high_amount_confirmation')!=text:
+                return deny('金额超过 ¥200，请用户追加回复：'+expected)
+    except (OSError,ValueError,KeyError,TypeError,StopIteration,sqlite3.Error):
+        return deny('无法核对最后一条用户消息或报价，停止下单；请重新报价并明确确认。')
+    return {}
 
 
 if __name__=='__main__':

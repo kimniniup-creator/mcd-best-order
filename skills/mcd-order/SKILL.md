@@ -3,10 +3,10 @@ name: mcd-order
 description: 麦当劳点餐入口。直接调用 mcd_start(utterance=用户本轮原话)，无需 shell 读取本文件；完整协议在工具描述和返回里。用于点餐、修改、帮我配、我自己点、照上次那份及“好了”恢复。服务尚未连上时说“服务启动中，请稍候再说一次”。
 ---
 
-1. 收到每条点餐原话（包括后续的方式、外带和餐具）立即调用 `mcd_start(utterance)`。utterance 必须逐字等于本轮最后一条用户消息，严禁拼入上一轮餐品/要素或改写成汇总；例如第二轮只说“在望京中街附近”，就只传这句，历史由服务端自动保留。只使用本机授权账户；缺授权时原样展示 setup_url，不向对话索要 Token。
+1. 收到每条点餐原话（包括后续的方式、外带和餐具）立即调用 `mcd_start(utterance)`；同一对话后续轮传前一轮返回的 session_id，新对话留空。utterance 必须逐字等于本轮最后一条用户消息，严禁拼入上一轮餐品/要素或改写成汇总；例如第二轮只说“在望京中街附近”，就只传这句，历史由服务端自动保留。只使用本机授权账户；缺授权时原样展示 setup_url，不向对话索要 Token。
 2. **原样展示 `display_markdown`**。第一问严格按返回的 T1 编号；`reply_options` 决定数字含义。具体餐品已说就保留在 session，不再问推荐或让用户重复点餐。地点和方式只问缺项，账户不问；时间默认立即，不沿用旧预约。
 3. 收到“自己点 / 帮我配 / 照上次那份”时，把原 `session_id` 传给 `find_store`，`plan` 用这三个中文值。门店没定以前不发点餐页链接。外送先 `delivery_addresses` 选已有地址，再 `find_store(fulfillment="delivery", address_id=...)`，不用猜 beCode。不得创建测试地址。
-4. `mcd_start` 或 `find_store` 返回 `items` / `selected_items` 时，这些就是原话餐品的购物车。接着 `quote_best`，不要再问推荐。返回 `next_tool` 是后续执行依据。新门店已有原话时 `get_menu(session_id=...)` 会按菜单继续解析。
+4. `mcd_start` 或 `find_store` 返回 `items` / `selected_items` 时，这些就是原话餐品的购物车。接着 `quote_best`，不要再问推荐。返回 `next_tool`、`next_arguments` 是后续执行依据；已给地点时立即继续工具链，不在“已收到你的选择”处结束。新门店已有原话时 `get_menu(session_id=...)` 会按菜单继续解析。
 5. 用户要自己点且门店已定，**先把 `display_markdown`（含 [打开点餐页](链接)）整段原样输出为用户可见的 assistant 正文，再在同一回合调用 `get_cart(session_id, wait=25, link_displayed=true)`**。用户看不到工具结果；内部思考、工具参数和工具结果中的链接都不算展示。必须在轮询之前发出正文，否则用户没有链接可点，永远无法提交。未提交就继续长轮询。提交后自动 `quote_best(items,store_code,elements)`，不要求用户回来说“选好了”。不输出内部说明或英文元话。链接只发一次，禁止催开页、声称发了两次或要求打开后说一声。超时继续 get_cart(wait=25)，不重复链接。选好会自动接着算；如果没接上，回来说一句“好了”。用户说“好了”时调用 mcd_start(utterance="好了") 取回原会话并报价，没有 Stop 钩子的宿主也照此恢复。购物车持久化 24 小时，MCP 退出后页面服务退出。
 
    同一条 assistant 消息按这个顺序组织：先 text 块原样写“最近的是… [打开点餐页](实际URL) — 选好点底部‘选好了，去算最省’，选好会自动接着算；如果没接上，回来说一句“好了”。”，再 tool_use 块调用 get_cart。禁止只有 tool_use 块。

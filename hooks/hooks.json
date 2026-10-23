@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__.*__get_cart",
+        "matcher": "mcp__.*__(get_cart|place_orders)",
         "hooks": [
           {
             "type": "command",
@@ -40,7 +40,7 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/launch.sh\" check",
-            "timeout": 180
+            "timeout": 10
           }
         ]
       }

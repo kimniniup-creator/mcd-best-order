@@ -83,7 +83,7 @@ def test_codex_ide_policy_preserves_server_command_and_other_servers(tmp_path,mo
     config=tomllib.loads(first)
     assert config['mcp_servers']['other']=={'command':'untouched'}
     policy=config['mcp_servers']['coupon-split']
-    assert policy['required'] and policy['command']=='uvx'
+    assert policy['required'] is False and policy['command']=='uvx'
     assert policy['tools']['quote_best']['approval_mode']=='approve'
     assert policy['tools']['place_orders']['approval_mode']=='prompt'
 

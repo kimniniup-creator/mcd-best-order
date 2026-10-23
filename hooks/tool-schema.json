@@ -1,0 +1,1157 @@
+[
+  {
+    "name": "find_store",
+    "description": "mcd_start 后，按用户给出的城市、地标和方式查询门店；不能从地址簿擅自推断用户想外送。",
+    "inputSchema": {
+      "properties": {
+        "city": {
+          "title": "City",
+          "type": "string"
+        },
+        "keyword": {
+          "default": "",
+          "title": "Keyword",
+          "type": "string"
+        },
+        "fulfillment": {
+          "default": "pickup",
+          "enum": [
+            "pickup",
+            "drive",
+            "delivery"
+          ],
+          "title": "Fulfillment",
+          "type": "string"
+        },
+        "address_id": {
+          "default": "",
+          "title": "Address Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "enum": [
+                "帮我配",
+                "我自己点",
+                "照上次那份"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan"
+        },
+        "utterance": {
+          "default": "",
+          "title": "Utterance",
+          "type": "string"
+        },
+        "location": {
+          "default": "",
+          "title": "Location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "city"
+      ],
+      "title": "find_storeArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_menu",
+    "description": "浏览全菜单；套餐返回官方选配和特制字段，按原样提交，不推测杯型。",
+    "inputSchema": {
+      "$defs": {
+        "OrderElements": {
+          "additionalProperties": false,
+          "properties": {
+            "fulfillment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pickup",
+                    "drive",
+                    "delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fulfillment"
+            },
+            "account_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Name"
+            },
+            "account_last4": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Last4"
+            },
+            "addressId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Addressid"
+            },
+            "delivery_address": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Delivery Address"
+            },
+            "takeWayCode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewaycode"
+            },
+            "takeWayName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewayname"
+            },
+            "reservationDate": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reservationdate"
+            },
+            "needTableware": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Needtableware"
+            },
+            "sources": {
+              "additionalProperties": {
+                "enum": [
+                  "utterance",
+                  "last",
+                  "default",
+                  "account",
+                  "nearest"
+                ],
+                "type": "string"
+              },
+              "title": "Sources",
+              "type": "object"
+            }
+          },
+          "title": "OrderElements",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "store_code": {
+          "title": "Store Code",
+          "type": "string"
+        },
+        "search": {
+          "default": "",
+          "title": "Search",
+          "type": "string"
+        },
+        "offset": {
+          "default": 0,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderElements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "people": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "People"
+        },
+        "recommend": {
+          "default": false,
+          "title": "Recommend",
+          "type": "boolean"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_code"
+      ],
+      "title": "get_menuArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_item_detail",
+    "description": "按需读取一个商品的官方规格/特制；未指定规格只用官方默认项。",
+    "inputSchema": {
+      "$defs": {
+        "OrderElements": {
+          "additionalProperties": false,
+          "properties": {
+            "fulfillment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pickup",
+                    "drive",
+                    "delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fulfillment"
+            },
+            "account_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Name"
+            },
+            "account_last4": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Last4"
+            },
+            "addressId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Addressid"
+            },
+            "delivery_address": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Delivery Address"
+            },
+            "takeWayCode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewaycode"
+            },
+            "takeWayName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewayname"
+            },
+            "reservationDate": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reservationdate"
+            },
+            "needTableware": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Needtableware"
+            },
+            "sources": {
+              "additionalProperties": {
+                "enum": [
+                  "utterance",
+                  "last",
+                  "default",
+                  "account",
+                  "nearest"
+                ],
+                "type": "string"
+              },
+              "title": "Sources",
+              "type": "object"
+            }
+          },
+          "title": "OrderElements",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "store_code": {
+          "title": "Store Code",
+          "type": "string"
+        },
+        "product_code": {
+          "title": "Product Code",
+          "type": "string"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderElements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "store_code",
+        "product_code"
+      ],
+      "title": "get_item_detailArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "quote_best",
+    "description": "输入 sku:数量，核价并在本地保存方案和确认凭证，不创建上游订单。同购物车并发复用，其余同账户排队。先展示金额，等下一回合确认。",
+    "inputSchema": {
+      "$defs": {
+        "OrderElements": {
+          "additionalProperties": false,
+          "properties": {
+            "fulfillment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pickup",
+                    "drive",
+                    "delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fulfillment"
+            },
+            "account_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Name"
+            },
+            "account_last4": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Last4"
+            },
+            "addressId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Addressid"
+            },
+            "delivery_address": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Delivery Address"
+            },
+            "takeWayCode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewaycode"
+            },
+            "takeWayName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewayname"
+            },
+            "reservationDate": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reservationdate"
+            },
+            "needTableware": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Needtableware"
+            },
+            "sources": {
+              "additionalProperties": {
+                "enum": [
+                  "utterance",
+                  "last",
+                  "default",
+                  "account",
+                  "nearest"
+                ],
+                "type": "string"
+              },
+              "title": "Sources",
+              "type": "object"
+            }
+          },
+          "title": "OrderElements",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "items": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "Items"
+        },
+        "store_code": {
+          "title": "Store Code",
+          "type": "string"
+        },
+        "allow_combos": {
+          "default": true,
+          "title": "Allow Combos",
+          "type": "boolean"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderElements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "items",
+        "store_code"
+      ],
+      "title": "quote_bestArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_options",
+    "description": "分页读取去重后的候选方案摘要，每页五条。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "offset": {
+          "default": 0,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "current_option_id": {
+          "default": "0",
+          "title": "Current Option Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id"
+      ],
+      "title": "get_optionsArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_evidence",
+    "description": "按编号读取当前账户的脱敏逐笔计价证据；券标识重放须用本机私有证据库。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "evidence_id"
+      ],
+      "title": "get_evidenceArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "place_orders",
+    "description": "仅逐字收到用户明确确认且宿主审批通过后调用。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "confirm_token": {
+          "title": "Confirm Token",
+          "type": "string"
+        },
+        "user_confirmation": {
+          "title": "User Confirmation",
+          "type": "string"
+        },
+        "option_id": {
+          "default": "0",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "take_way": {
+          "default": "",
+          "title": "Take Way",
+          "type": "string"
+        },
+        "high_amount_confirmation": {
+          "default": "",
+          "title": "High Amount Confirmation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "confirm_token",
+        "user_confirmation"
+      ],
+      "title": "place_ordersArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    }
+  },
+  {
+    "name": "pay_card",
+    "description": "查询已创建订单状态、官方支付链接和截止时间；临近截止自动撤回待付单。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id"
+      ],
+      "title": "pay_cardArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "cancel_plan",
+    "description": "放弃方案或撤回待付订单；只取消当前账户自己的方案。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id"
+      ],
+      "title": "cancel_planArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "preview_selection",
+    "description": "只读核价，返回本次官方可选堂食/外带方式；不会创建方案或订单。",
+    "inputSchema": {
+      "$defs": {
+        "OrderElements": {
+          "additionalProperties": false,
+          "properties": {
+            "fulfillment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pickup",
+                    "drive",
+                    "delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fulfillment"
+            },
+            "account_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Name"
+            },
+            "account_last4": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Account Last4"
+            },
+            "addressId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Addressid"
+            },
+            "delivery_address": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Delivery Address"
+            },
+            "takeWayCode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewaycode"
+            },
+            "takeWayName": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Takewayname"
+            },
+            "reservationDate": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reservationdate"
+            },
+            "needTableware": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Needtableware"
+            },
+            "sources": {
+              "additionalProperties": {
+                "enum": [
+                  "utterance",
+                  "last",
+                  "default",
+                  "account",
+                  "nearest"
+                ],
+                "type": "string"
+              },
+              "title": "Sources",
+              "type": "object"
+            }
+          },
+          "title": "OrderElements",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "store_code": {
+          "title": "Store Code",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderElements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "store_code",
+        "items"
+      ],
+      "title": "preview_selectionArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "account_info",
+    "description": "读取本人账户，仅返回账户后四位与本机别名，不返回完整账户号。",
+    "inputSchema": {
+      "properties": {},
+      "title": "account_infoArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mcd_start",
+    "description": "任意点餐原话的唯一入口，无需用 shell 读取 SKILL.md，完整协议由本工具返回。\n\n每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。\n按 next_tool 和 next_arguments 同回合继续，只追问 missing。\n原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，\n再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。\n收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。\n报价完整展示后停等明确确认；place_orders 还须宿主审批，不得自主下单。\n缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。\n",
+    "inputSchema": {
+      "properties": {
+        "utterance": {
+          "description": "逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。",
+          "title": "Utterance",
+          "type": "string"
+        },
+        "recommend": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recommend"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "enum": [
+                "帮我配",
+                "我自己点",
+                "照上次那份"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan"
+        },
+        "session_id": {
+          "default": "",
+          "description": "仅传本对话前一轮工具返回的 session_id。新对话留空，不查询或猜测旧 ID。",
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "utterance"
+      ],
+      "title": "mcd_startArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_cart",
+    "description": "先在 assistant 正文发送 [打开点餐页](实际URL)，然后才能传 link_displayed=true 等待。\n\nlink_displayed 是必填声明：工具结果里的链接不算发送，必须先发一条含链接的\nassistant text，再在同一回合调用本工具。未发链接时传 false，按返回纠正交接。\n提交后按 next_tool 核价；超时继续等待，不重复链接、不催开页。\n",
+    "inputSchema": {
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "link_displayed": {
+          "title": "Link Displayed",
+          "type": "boolean"
+        },
+        "wait": {
+          "default": 0,
+          "title": "Wait",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "link_displayed"
+      ],
+      "title": "wait_cartArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "delivery_addresses",
+    "description": "",
+    "inputSchema": {
+      "properties": {},
+      "title": "delivery_addressesArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "prepare_address",
+    "description": "仅准备用户提供的新地址，返回遮挡手机号的确认卡；不写入上游。",
+    "inputSchema": {
+      "properties": {
+        "address": {
+          "additionalProperties": true,
+          "title": "Address",
+          "type": "object"
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "title": "prepare_addressArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "confirm_address",
+    "description": "",
+    "inputSchema": {
+      "properties": {
+        "confirmation": {
+          "title": "Confirmation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "confirmation"
+      ],
+      "title": "confirm_addressArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    }
+  }
+]
