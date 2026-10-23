@@ -42,6 +42,24 @@ def configure_codex():
     print('已配置：报价自动通过；下单、撤回和支付状态工具请求宿主审批。')
 
 
+def preflight():
+    """Prepare the MCP entry point before a cold Codex conversation starts."""
+    import asyncio
+    from mcp import ClientSession,StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    async def check():
+        params=StdioServerParameters(command=shutil.which('uvx') or 'uvx',args=['--from',SOURCE,'coupon-split-mcp'],env=dict(os.environ))
+        async with stdio_client(params) as (read,write):
+            async with ClientSession(read,write) as session:
+                await session.initialize()
+                tools=await session.list_tools()
+                if not any(tool.name=='mcd_start' for tool in tools.tools):raise RuntimeError('缺少点餐入口')
+    print('正在准备点餐服务，首次需要下载依赖；不会查询账户或下单。',flush=True)
+    try:asyncio.run(asyncio.wait_for(check(),timeout=180))
+    except Exception:raise SystemExit('点餐服务启动检查失败；请检查 uv、Git 和网络后重新执行安装第二行。') from None
+    print('点餐服务已准备好。请新开 Codex 会话，说“我要吃麦当劳”。')
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('action',choices=['setup','forget-credential'])
@@ -63,6 +81,7 @@ def main():
     if args.host=='codex-plugin':
         if not args.apply:raise SystemExit('需 --apply 同意：仅配置本插件报价自动通过及写工具审批。')
         configure_codex()
+        preflight()
         return
     if args.host=='claude-code':
         raise SystemExit('Claude 必须用完整插件：/plugin marketplace add kimniniup-creator/mcd-best-order，然后 /plugin install mcd-best-order@mcd-best-order-marketplace')
