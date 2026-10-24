@@ -43,7 +43,8 @@ async def test_create_payment_cancel_fixture(tmp_path):
     api=Fixture();service=Service(api,str(tmp_path/'plans.db'));p=plan();service.save(p)
     placed=await service.place('fixture',p['plan_id'],p['confirm_token'])
     assert placed['state']=='awaiting_payment'
-    assert '手机打开麦当劳 App' in markdown(placed) and '15分钟' in markdown(placed)
+    assert '[打开付款页]' in markdown(placed) and '15分钟' in markdown(placed)
+    assert 'jumpToApp' not in markdown(placed) and 'payH5Url' not in public(placed)['orders'][0]
     assert public(placed)['orders'][0]['mobilePayUrl'].startswith('https://m.mcd.cn/mcp/jumpToApp/')
     again=await service.place('fixture',p['plan_id'],p['confirm_token'])
     assert again['orders']==placed['orders'] and api.calls.count('create-order')==1
@@ -71,7 +72,8 @@ def test_codex_policy_is_scoped_and_idempotent(tmp_path,monkeypatch):
     config=tomllib.loads(first);assert config['other']['value'] and config['model']=='unchanged'
     policy=config['plugins']['mcd-best-order@mcd-best-order-marketplace']['mcp_servers']['coupon-split']
     assert policy['tools']['quote_best']['approval_mode']=='approve'
-    assert all(policy['tools'][tool]['approval_mode']=='prompt' for tool in ('place_orders','cancel_plan','pay_card'))
+    assert all(policy['tools'][tool]['approval_mode']=='prompt' for tool in ('place_orders','cancel_plan'))
+    assert all(policy['tools'][tool]['approval_mode']=='approve' for tool in ('wait_payment','pay_card'))
 
 
 def test_codex_ide_policy_preserves_server_command_and_other_servers(tmp_path,monkeypatch):
@@ -123,6 +125,17 @@ async def test_host_approval_metadata():
     assert tool.meta['anthropic/requiresUserInteraction'] is True
     assert tool.annotations.destructiveHint and not tool.annotations.readOnlyHint
     assert 'user_confirmation' in tool.inputSchema['required']
+
+
+def test_packaged_slang_dictionary_is_menu_bound():
+    from coupon_split.slang import ENTRIES
+    from coupon_split.menu import resolve_intent,AmbiguousIntent
+    assert len(ENTRIES)==57
+    rows=[dict(productCode='fixture-a',name='随心配',price_yuan='13.9'),dict(productCode='fixture-b',name='人气超值四件套随心选',price_yuan='28')]
+    assert resolve_intent('四件套两份',rows)==[dict(productCode='fixture-b',quantity=2)]
+    assert resolve_intent('来个穷鬼套餐',rows)==[dict(productCode='fixture-a',quantity=1)]
+    with pytest.raises(AmbiguousIntent,match='肯德基'):resolve_intent('疯狂星期四',rows)
+    with pytest.raises(AmbiguousIntent,match='是指哪种'):resolve_intent('8+4',rows)
 
 
 async def test_new_authorization_is_recovered_without_server_restart(tmp_path,monkeypatch):

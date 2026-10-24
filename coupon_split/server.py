@@ -125,8 +125,8 @@ async def find_store(city: str, keyword: str = "", fulfillment: Literal['pickup'
         if stores:
             await resolve_cart_intent(cart, token())
             data.update(session_id=session_id, selected_items=cart['items'], elements=cart['elements'])
-            if cart.get('intent_options'):
-                data.update(next_tool='get_menu',reply_options=cart['intent_options'])
+            if cart.get('intent_question'):
+                data.update(next_tool=None,stage='ask',reply_options=cart['intent_options'])
                 text+='\n'+cart['intent_question']
             elif cart['items']:
                 data.update(next_tool='quote_best', stage='pick')
@@ -160,12 +160,19 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
     base = {"storeCode":store_code,"orderType":1,"beType":1,**context}
     menu = (await upstream.call(t,"query-meals",base))["data"]
     rows = menu_rows(menu)
-    if search: rows = matches(search, rows)
+    if search:
+        from coupon_split.slang import resolve
+        slang=resolve(search,rows)
+        if slang and not slang['selected']:
+            return result({'items':slang['rows'],'selected_items':[],'slang_kind':slang['entry']['kind'],'stage':'ask','next_tool':'mcd_start'},slang['message'])
+        rows=slang['rows'] if slang else matches(search,rows)
     page=rows[max(0,offset):max(0,offset)+8]
     selected=[]
     if cart:
         cart['store_code']=store_code
         await resolve_cart_intent(cart,t,menu)
+        if cart.get('intent_question'):
+            return result({'stage':'ask','next_tool':None,'session_id':session_id,'selected_items':[],'reply_options':cart['intent_options']},cart['intent_question'])
         selected=cart['items']
     elif search and offset==0:
         try:resolved=resolve_intent(search,rows)
@@ -174,13 +181,17 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
         for item in resolved:
             detail=(await upstream.call(t,'query-meal-detail',dict(base,code=item['productCode'])))['data']
             selected.append(default_item(detail,item['quantity']))
-    compact=[{k:r[k] for k in ('productCode','name','price_yuan','category')} for r in page]
-    text='这家店现在的菜单（也可以直接说餐品名称和数量）：\n'+'\n'.join(f"{n} {r['name']}　¥{float(r['price_yuan']):.2f}" for n,r in enumerate(page,1))
+    compact=[{k:r[k] for k in ('productCode','name','price_yuan','was_yuan','requires_card','category')} for r in page]
+    def menu_line(n,r):
+        price=f"¥{float(r['price_yuan']):.2f}"
+        if r.get('requires_card'):price='含卡价 '+price+' / 不带卡价 '+(f"¥{float(r['was_yuan']):.2f}" if r.get('was_yuan') else '待核')+'（卡费另计，报价时比较）'
+        return f"{n} {r['name']}　{price}"
+    text='这家店现在的菜单（也可以直接说餐品名称和数量）：\n'+'\n'.join(menu_line(n,r) for n,r in enumerate(page,1))
     data={'items':compact,'total':len(rows),'next_offset':offset+8 if offset+8<len(rows) else None,'selected_items':selected,'stage':'pick','next_tool':'quote_best' if selected else 'get_item_detail'}
     # Variable-length menus/default rounds must never overflow the model's budget.
     while len(json.dumps(data,ensure_ascii=False).encode())+len(text.encode())*2>3700 and len(compact)>1:
         compact.pop();data['next_offset']=offset+len(compact)
-        text='这家店现在的菜单（也可以直接说名称和数量）：\n'+'\n'.join(f"{n} {r['name']}　¥{float(r['price_yuan']):.2f}" for n,r in enumerate(compact,1))
+        text='这家店现在的菜单（也可以直接说名称和数量）：\n'+'\n'.join(menu_line(n,r) for n,r in enumerate(compact,1))
     return result(data,text)
 
 
@@ -373,19 +384,20 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: str,
             'item_summary':state.get('item_summary','')}
         memory.write(owner(t),state)
     data=public(plan)
-    if plan['state']=='awaiting_payment':
+    if plan.get('dry_run'):data.update(next_tool=None,payment_wait_skipped=True)
+    if plan['state']=='awaiting_payment' and not plan.get('dry_run'):
         data.update(next_tool='wait_payment',next_arguments={'plan_id':plan_id,'timeout':60},
                     before_next_tool='先在可见正文原样输出 display_markdown 付款卡，再循环 wait_payment；已付款后告知真实取餐码和门店。')
     return result(data,markdown(plan))
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def pay_card(plan_id: str) -> CallToolResult:
-    """查询已创建订单状态、官方支付链接和截止时间；临近截止自动撤回待付单。"""
-    plan = await service.status(token(),plan_id)
+    """只读查询已创建订单状态和付款页；临期撤回由后台巡检负责。"""
+    plan = await service.inspect_payment(token(),plan_id)
     for o in plan["orders"]:
         o["remaining_seconds"] = max(0,int(deadline(o["expirePayTime"])-time.time()))
-    await attach_payment_url(plan)
+    if plan.get('payment_key'):plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
     return result(public(plan),markdown(plan))
 
 
@@ -397,15 +409,15 @@ async def attach_payment_url(plan):
     return plan
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def wait_payment(plan_id: str, timeout: Annotated[int, Field(ge=0,le=60)] = 60) -> CallToolResult:
-    """先原样输出付款卡，再每轮等待最多60秒；每3秒查状态。还没付款时继续调用，临期自动撤回。"""
+    """只读等待付款，每轮最多60秒、每3秒查状态，不写本地或上游；临期撤回由后台巡检负责。模拟模式无需调用。"""
     plan=await service.wait_payment(token(),plan_id,timeout)
-    await attach_payment_url(plan)
-    text='还没付款。' if plan['state']=='awaiting_payment' else '已取消。' if plan['state'] in {'cancelled','awaiting_coupon_return'} else '已付款。' if plan['state']=='paid' else '订单正在核验。'
+    if plan.get('payment_key'):plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
+    from coupon_split.payment import payment_message
+    text=('还没付款。\n' if plan['state']=='awaiting_payment' else '')+payment_message(plan)
     codes=[str(o[k]) for o in plan.get('orders',[]) for k in ('takeCode','pickupCode','orderCode','mealCode') if o.get(k)]
-    text+='\n'+plan.get('storeName','所选门店')+(' · 取餐码：'+'、'.join(dict.fromkeys(codes)) if codes else '')
-    return result(dict(public(plan),next_tool='wait_payment' if plan['state']=='awaiting_payment' else '',pickup_codes=list(dict.fromkeys(codes))),text)
+    return result(dict(public(plan),next_tool='wait_payment' if plan['state']=='awaiting_payment' and not plan.get('dry_run') else '',pickup_codes=list(dict.fromkeys(codes))),text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
@@ -560,7 +572,9 @@ async def resolve_cart_intent(cart,t,menu=None):
         return
     if selected:
         await validate_selected(t,store,selected,context,fill_defaults=True)
-        cart.update(items=selected,intent_resolved=True)
+        cart.pop('intent_question',None);cart.pop('intent_options',None)
+        names={r['productCode']:r['name'] for r in menu_rows(menu)}
+        cart.update(items=selected,intent_resolved=True,item_summary='、'.join(names.get(i['productCode'],'所选餐品')+' ×'+str(i['quantity']) for i in selected))
 
 
 async def local_url():
@@ -597,6 +611,11 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     import re
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
+    from coupon_split.slang import classify,resolve
+    slang=classify(utterance)
+    if slang and slang['kind'] in {'other_brand','unsupported','brand'}:
+        clarification=resolve(utterance,[])
+        return result({'stage':'ask','next_tool':None,'session_id':session_id,'missing':['food'],'items':[]},clarification['message'])
     url=await local_url()
     global UPSTREAM_TOKEN
     if not credential.get() and memory.read('onboarding').get('utterance'):
@@ -636,6 +655,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
             and existing.get('store_code')):
         # Host retries can arrive after the page submitted. Never turn that
         # accepted cart back into an unsubmitted one or discard its page state.
+        if existing.get('intent_question'):
+            return result({'stage':'ask','next_tool':None,'session_id':state['active_session'],'reply_options':existing['intent_options']},existing['intent_question'])
         return await get_cart(state['active_session'],wait=0)
     if utterance.strip().strip('。！!') in {'好了','选好了'}:
         sid=state.get('active_session','')
@@ -697,7 +718,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if previous.get('store_code'):e['sources']['store_code']=active['elements'].get('sources',{}).get('store_code','default') if continuing else 'last'
     if incoming.get('fulfillment') and incoming['fulfillment']!=previous.get('elements',{}).get('fulfillment'):
         previous.pop('store_code',None)
-    concrete=bool(intent_text(utterance)) and not intent_text(utterance).isdigit()
+    concrete=bool(intent_text(utterance)) and (not intent_text(utterance).isdigit() or bool(slang and slang['kind'] in {'direct','family','ambiguous'}))
     if recommend is not None and plan is None:plan='帮我配' if recommend else '我自己点'
     if any(w in utterance for w in ('帮我配','帮我推荐','推荐一下','随便来点')) or people_match or re.search(r'预算|不吃|忌口',utterance):plan='帮我配'
     elif re.search(r'照上次|照旧',utterance):plan='照上次那份'
@@ -799,8 +820,6 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         page=url+'/order/'+sid
         data.update(stage='pick',order_url=page,picker_url=page,links={'picker_url':page},next_tool='get_cart',wait=25)
         text=f'[打开点餐页]({page}) — 选好点底部“选好了，去算最省”，选好会自动接着算；如果没接上，回来说一句“好了”。'
-    if cart.get('intent_options'):
-        data.update(next_tool='get_menu',reply_options=cart['intent_options']);text=cart['intent_question']
     if missing:
         data['next_tool']='mcd_start'
         data['next_arguments']={'session_id':sid}
@@ -811,8 +830,20 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         data['next_action']='立即调用 find_store：city 必须从用户给出的 location 中提取，keyword 用其余地标。不要传空 city，不要在“已收到你的选择”处结束回合。'
         text='正在查你附近的可用门店，接着打开点餐页。'
     pending=carts.get(state.get('pending_session',''))
+    if cart.get('intent_question'):
+        data.update(stage='ask',next_tool=None,reply_options=cart['intent_options'])
+        for field in ('picker_url','order_url','links','wait','next_arguments'):data.pop(field,None)
+        text=cart['intent_question']
     if pending and pending.get('items') and not resume_requested:
-        notice='上次有一份没下单的（'+pending.get('item_summary','、'.join(i['productCode']+' ×'+str(i['quantity']) for i in pending['items']))+'），要接着用吗？说“继续刚才”即可恢复。'
+        summary=pending.get('item_summary','')
+        if not summary:
+            try:
+                context=order_context(get_store_context(t,pending['store_code']),pending['elements'],require_take=False)
+                current=(await upstream.call(t,'query-meals',dict(context,storeCode=pending['store_code'])))['data']
+                names={r['productCode']:r['name'] for r in menu_rows(current)}
+            except Exception:names={}
+            summary='、'.join(names.get(i['productCode'],'所选餐品')+' ×'+str(i['quantity']) for i in pending['items'])
+        notice='上次有一份没下单的（'+summary+'），要接着用吗？说“继续刚才”即可恢复。'
         data['pending_cart_notice']=notice
         text+='\n\n'+notice
     data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待明确确认和Claude Code/Codex 允许弹窗。全程中文，不对用户说英文元话。'
@@ -1126,7 +1157,7 @@ async def payment_page(request):
         return FileResponse(ROOT/'web/payment.html',headers=headers)
     t=active_credentials.get(plan['owner']) or (UPSTREAM_TOKEN if UPSTREAM_TOKEN and owner(UPSTREAM_TOKEN)==plan['owner'] else None)
     if not t:return JSONResponse({'error':'账户连接已失效，请回到对话重新授权。'},status_code=401,headers=headers)
-    plan=await service.status(t,plan['plan_id'])
+    plan=await service.inspect_payment(t,plan['plan_id'])
     from coupon_split.payment import payment_state
     return JSONResponse(payment_state(plan,request.headers.get('user-agent','')),headers=headers)
 

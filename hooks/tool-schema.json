@@ -973,7 +973,7 @@
   },
   {
     "name": "pay_card",
-    "description": "查询已创建订单状态、官方支付链接和截止时间；临近截止自动撤回待付单。",
+    "description": "只读查询已创建订单状态和付款页；临期撤回由后台巡检负责。",
     "inputSchema": {
       "properties": {
         "plan_id": {
@@ -988,15 +988,15 @@
       "type": "object"
     },
     "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true,
+      "readOnlyHint": true,
+      "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true
     }
   },
   {
     "name": "wait_payment",
-    "description": "先原样输出付款卡，再每轮等待最多60秒；每3秒查状态。还没付款时继续调用，临期自动撤回。",
+    "description": "只读等待付款，每轮最多60秒、每3秒查状态，不写本地或上游；临期撤回由后台巡检负责。模拟模式无需调用。",
     "inputSchema": {
       "properties": {
         "plan_id": {
@@ -1018,8 +1018,8 @@
       "type": "object"
     },
     "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true,
+      "readOnlyHint": true,
+      "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true
     }

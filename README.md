@@ -98,7 +98,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.0/coupon_split-0.6.0-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.1/coupon_split-0.6.1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件设置报价和下单的允许弹窗。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单、撤回和支付状态查询都保留逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -106,7 +106,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.0/coupon_split-0.6.0-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.1/coupon_split-0.6.1-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -145,14 +145,14 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.6.0 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.6.0)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.6.1 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.6.1)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.0/coupon_split-0.6.0-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.1/coupon_split-0.6.1-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。
@@ -162,3 +162,5 @@ Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`
 仅支持中国大陆麦当劳。价格随门店、时段和本人账户变化，搜索次数有限，不保证全局最低。验证码和付款由你本人完成。
 
 版权：保留所有权利，见 LICENSE。本项目与麦当劳无隶属关系。
+
+支持“穷鬼套餐”“四件套”等点餐俗称，按所选门店当前菜单确认餐品和价格；歧义词会先问清。比较口径：官方渠道最优价，比照原样下单省 ¥X。模拟模式不等待付款；真实下单后先展示付款页，再只读查询付款状态。

@@ -11,8 +11,9 @@ def menu_rows(menu):
             categories[str(item.get('code', item.get('productCode')))] = category['name']
     return [dict(productCode=str(code), name=m.get('name', m.get('productName', code)),
                  price_yuan=str(m.get('currentPrice', '')), was_yuan=str(m.get('originalPrice', '')),
+                 requires_card=bool(m.get('withOrder')),
                  image=m.get('image', ''), category=categories.get(str(code), '其他餐品'),
-                 **{k:m[k] for k in ('aliases', 'alias', 'sales', 'salesVolume', 'description', 'available', 'isSelling', 'onSale', 'spicy', 'isSpicy', 'portion', 'servingSize', 'allergens', 'servingsByRole') if k in m})
+                 **{k:m[k] for k in ('aliases', 'alias', 'sales', 'salesVolume', 'description', 'available', 'isSelling', 'onSale', 'soldOut', 'spicy', 'isSpicy', 'portion', 'servingSize', 'allergens', 'servingsByRole') if k in m})
             for code, m in menu['meals'].items()]
 
 
@@ -58,9 +59,10 @@ def intent_text(utterance):
 
 
 class AmbiguousIntent(ValueError):
-    def __init__(self, rows):
+    def __init__(self, rows, message=''):
         self.options = rows[:8]
-        super().__init__('你说的对应几款餐品，请选编号：\n'+'\n'.join(f"{n} {r['name']}　¥{r['price_yuan']}" for n,r in enumerate(self.options,1)))
+        numbered='\n'.join(f"{n} {r['name']}　¥{r['price_yuan']}" for n,r in enumerate(self.options,1))
+        super().__init__((message+'\n'+numbered).rstrip() if message else '你说的对应几款餐品，请选编号：\n'+numbered)
 
 
 def resolve_intent(utterance, rows):
@@ -69,8 +71,17 @@ def resolve_intent(utterance, rows):
     parts = re.split(r'[、，,。]|再来|加一份|加个|和', utterance)
     result = []
     for part in filter(None, parts):
-        ranked = matches(intent_text(part), rows) if intent_text(part) else []
+        from coupon_split.slang import resolve,available
+        slang=resolve(part,rows)
+        if slang and not slang['selected']:raise AmbiguousIntent(slang['rows'],slang['message'])
+        ranked = slang['rows'] if slang else matches(intent_text(part), [r for r in rows if available(r)]) if intent_text(part) else []
         if ranked:
+            if slang:
+                quantity=re.search(r'(\d+|[一两二三四五六七八九十])(?:个|份|杯|套)',part)
+                q=quantity[1] if quantity else '1'
+                q=int(q) if q.isdigit() else '一二三四五六七八九十'.index(q.replace('两','二'))+1
+                result.append({'productCode':ranked[0]['productCode'],'quantity':min(q,20)})
+                continue
             query=normalized_name(intent_text(part))
             exact=[r for r in ranked if normalized_name(r['name'])==query or query in [normalized_name(a) for a in ([r.get('aliases',r.get('alias',[]))] if isinstance(r.get('aliases',r.get('alias',[])),str) else r.get('aliases',r.get('alias',[])))]]
             contained=[r for r in ranked if normalized_name(r['name']) in query]

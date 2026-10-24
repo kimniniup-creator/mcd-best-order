@@ -206,12 +206,14 @@ class Service:
             plan["reconciliation_notice"]="有下单结果不明的请求，正在按账户订单重试对账；请勿重新下单，需人工核验时保留此方案。"
         self.save(plan)
 
-    async def _cancel(self, token, plan):
+    async def _cancel(self, token, plan, only_expiring=False):
         if not plan["dry_run"] and plan.get("unknown_orders"):
             await self._reconcile(token,plan)
         failed = bool(plan.get("unknown_orders"))
         for order in plan["orders"]:
-            if order.get("status") == "60":
+            if str(order.get("status","10")) != "10":
+                continue
+            if only_expiring and deadline(order['expirePayTime']) > time.time()+60:
                 continue
             if not plan["dry_run"]:
                 try:
@@ -220,8 +222,7 @@ class Service:
                         order.update(status="60",orderStatus="已撤回，退券待核验")
                         continue
                     if str(current.get("status")) != "10":
-                        failed = True
-                        order["cancel_error"] = "不是待付订单，需核验处理"
+                        order.update({k:current[k] for k in ('status','orderStatus','takeCode','pickupCode','orderCode','mealCode','expirePayTime') if k in current})
                         continue
                     result = await self.upstream.call(token, "cancel-order", {"orderId": order["orderId"], "cancelReasonCode": 3})
                     if result["data"].get("cancelResult") is not True:
@@ -234,8 +235,9 @@ class Service:
                     order["cancel_error"] = "取消未确认，等待重试"
                     continue
             order.update(status="60", orderStatus="已撤回（模拟）" if plan["dry_run"] else "已撤回，退券待核验")
-        plan["state"] = "rollback_pending" if failed else "cancelled"
-        if not failed and not plan["dry_run"]:
+            if only_expiring:order['auto_expired']=True
+        plan["state"] = "rollback_pending" if failed else payment_status(plan)
+        if not failed and not plan["dry_run"] and plan['state']=='cancelled':
             coupon_ids = {i["couponId"] for o in plan.get("selected",{}).get("orders",[]) for i in o["request"]["items"] if i.get("couponId")}
             if coupon_ids:
                 plan["state"] = "awaiting_coupon_return"
@@ -272,23 +274,42 @@ class Service:
                     current = (await self.upstream.call(token, "query-order", {"orderId": order["orderId"]}))["data"]
                     order.update({k:current[k] for k in ["status", "orderStatus", "takeCode", "pickupCode", "orderCode", "mealCode", "expirePayTime"] if k in current})
             if plan["state"] == "rollback_pending" or any(deadline(o["expirePayTime"]) <= time.time()+60 and str(o.get("status")) == "10" for o in plan["orders"]):
-                for o in plan['orders']:
-                    if str(o.get('status'))=='10' and deadline(o['expirePayTime'])<=time.time()+60:o['auto_expired']=True
-                return await self._cancel(token, plan)
-            if plan["orders"] and all(str(o.get("status")) not in {"10", "60"} for o in plan["orders"]):
-                plan["state"] = "paid"
-            elif plan['orders'] and all(str(o.get('status'))=='60' for o in plan['orders']):
-                plan['state']='cancelled'
+                return await self._cancel(token, plan,only_expiring=plan['state']!='rollback_pending')
+            plan['state']=payment_status(plan)
             self.save(plan)
             return plan
+
+    async def inspect_payment(self, token, plan_id):
+        """Read upstream status into a detached snapshot; never persist or cancel."""
+        plan=self.load(plan_id,token)
+        if plan['state'] in {'quoted','placing'}:return plan
+        if not plan.get('dry_run'):
+            for order in plan.get('orders',[]):
+                try:
+                    current=(await self.upstream.call(token,'query-order',{'orderId':order['orderId']}))['data']
+                    order.update({k:current[k] for k in ('status','orderStatus','takeCode','pickupCode','orderCode','mealCode','expirePayTime') if k in current})
+                    order.pop('query_error',None)
+                except Exception:
+                    order['query_error']='暂时查不到订单状态，正在重试'
+        if not plan.get('unknown_orders'):plan['state']=payment_status(plan)
+        return plan
 
     async def wait_payment(self, token, plan_id, timeout=60):
         until=time.monotonic()+max(0,min(60,float(timeout)))
         while True:
-            plan=await self.status(token,plan_id)
+            plan=await self.inspect_payment(token,plan_id)
             if plan['state']!='awaiting_payment' or time.monotonic()>=until:
                 return plan
             await asyncio.sleep(min(3,max(0,until-time.monotonic())))
+
+
+def payment_status(plan):
+    statuses=[str(o.get('status','10')) for o in plan.get('orders',[])]
+    if not statuses:return plan['state']
+    if '10' in statuses:return 'awaiting_payment'
+    if all(s=='60' for s in statuses):return 'cancelled'
+    if '60' in statuses:return 'partially_completed'
+    return 'paid'
 
 
 def deadline(value):

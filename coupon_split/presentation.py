@@ -138,7 +138,7 @@ def public(plan):
     import qrcode.image.svg
     import io
     for order in result.get("orders",[]):
-        value = order.get("payH5Url")
+        value = order.pop("payH5Url",None)
         if value:
             url = urlsplit(value)
             if not official_payment_url(value):
@@ -238,12 +238,15 @@ def markdown(plan):
         n=len(plan["orders"])
         cancelled=plan["state"]=="cancelled"
         return ("**模拟 · 已撤回，没有产生任何订单。**" if cancelled else "**模拟下单，未产生真实订单，也不能付款。**")+ ("" if cancelled else f"\n需依次支付 {n} 笔（真实下单时）。" if n>1 else "\n真实下单时付 1 次。")+"\n"+"\n".join(f"单 {i}｜{money(o['price'])}｜{'已撤回' if cancelled else o['orderStatus']}" for i,o in enumerate(plan["orders"],1))
+    if plan['state'] in {'paid','partially_completed'}:
+        from coupon_split.payment import payment_message
+        return payment_message(plan)
     if plan['state'] == 'cancelled':
         return "**已撤回。**\n本可省 " + money(plan.get('selected',{}).get('savings',0)) + "，已撤回。\n" + "\n".join(f"单 {i}｜{money(o['price'])}｜已撤回" for i,o in enumerate(plan['orders'],1))
     state={"awaiting_payment":"待支付","cancelled":"已撤回","rollback_pending":"撤回待核验","awaiting_coupon_return":"已撤回，退券待核验","paid":"已支付","placing":"处理中"}.get(plan["state"],"核验中")
     rows = [f"订单状态：{state}。需依次支付 {len(plan['orders'])} 笔。"]
     for i,o in enumerate(plan["orders"],1):
         payment=public({'orders':[o]})['orders'][0]
-        link = f"[打开付款页]({plan.get('payment_url','')}) · [手机打开麦当劳 App 付款]({payment['mobilePayUrl']})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
+        link = f"[打开付款页]({plan.get('payment_url','')})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
         rows.append(f"单 {i}｜{money(o['price'])}｜{o['orderStatus']}｜{link}｜{o['expirePayTime']} 前付款。")
     return "\n\n".join(rows)+"\n\n请在15分钟内付款。必须安装麦当劳 App。电脑请打开付款页，用手机麦当劳 App 扫一扫（推荐），也可用微信扫一扫；手机可直接打开 App。也可在 App → 我的订单中查找本单（此入口待实测）。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’。"

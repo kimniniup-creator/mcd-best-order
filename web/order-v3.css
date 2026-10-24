@@ -5,7 +5,7 @@
    ===================================================================== */
 :root{
   --c-canvas:#F3EFE7; --c-paper:#FFFDF8; --c-paper-sunk:#F7F2E8; --c-paper-deep:#EDE6D8;
-  --c-ink:#1A1813; --c-ink-2:#5B564C; --c-ink-3:#7A7366;          /* ink-3 由 #8F897C 加深，正文对比 4.6:1 */
+  --c-ink:#1A1813; --c-ink-2:#5B564C; --c-ink-3:#6B6459;          /* ink-3 由 #8F897C 加深，正文对比 4.6:1 */
   --c-line:#E7E0D2; --c-line-strong:#D3C9B6; --c-line-ui:#8F897C;  /* line-ui：控件边框，≥3:1 */
   --c-on-ink:#FFFDF8;
   /* 行动色：辣椒橙。白字对比 4.92:1（AA） */
@@ -406,3 +406,5 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .stepper button{display:inline-grid;place-items:center;width:44px;height:44px;padding:0;border-radius:50%;font-size:21px}.stepper button span{width:auto;height:auto;border:0;background:none;color:inherit;font-size:inherit}.stepper .plus span{background:none;color:inherit}.cart__foot{gap:10px}.cl{gap:4px 10px}.cl__row{margin:0}.brandmark{font-size:16px}.cart__promise{margin-top:4px}.recard__p{border-left:0;box-shadow:none}.recard{overflow:hidden}.strip .el__v .t{color:var(--c-ink);font-weight:600}.cart__empty{border:1.5px dashed var(--c-line-strong);margin:8px 20px 16px}.cart::after{content:'';position:absolute;left:0;right:0;bottom:-10px;height:10px;background:linear-gradient(135deg,var(--c-paper) 50%,transparent 50%) 0 0/16px 10px repeat-x}.food .price>.price{font-size:inherit}@media(min-width:900px){.menu.list{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;align-content:start}.menu>.tools{grid-column:1;grid-row:1;margin:0}.menu>.tools .search{height:62px}.menu>.recard{grid-column:2;grid-row:1;margin:0}.menu>.recard.is-on{grid-column:1/-1;grid-row:2}.menu>#menu{grid-column:1/-1}.cart{border-radius:18px 18px 0 0}.aside{max-height:calc(100vh - 155px);padding-bottom:12px}.cart__empty{padding:22px 16px}.food__body{flex:1}.food__foot{margin-top:auto}}
 
 .stepper button.plus span{background:none;color:inherit;border:0;box-shadow:none}
+
+.is-soldout .food__sub{color:var(--c-ink-2);font-weight:600}.is-soldout .food__img{opacity:.6}#add-recommendation[hidden]{display:none}
