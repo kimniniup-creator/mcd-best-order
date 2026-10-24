@@ -264,7 +264,7 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     for key,value in elements.items():
         if key=='sources':continue
         elements['sources'][key]=(trusted.get(key,'default') if active and previous.get(key)==value else
-            (trusted.get(key) if trusted.get(key) in {'default','nearest','account'} else 'last') if previous.get(key)==value else 'default')
+            (trusted.get(key) if trusted.get(key) in {'default','nearest','account'} else 'last') if key in previous and previous[key]==value else 'default')
     official=(await account_info()).structuredContent
     if incoming.get("account_last4") and incoming["account_last4"]!=official["account_last4"]:
         raise ValueError("账户后四位与本机授权账户不一致，请刷新账户信息")

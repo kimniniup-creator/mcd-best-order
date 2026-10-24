@@ -48,7 +48,7 @@ def resolve(text,rows):
         alternatives=[r for r in rows if available(r)][:4]
         message=f'你说的{alias}对应餐品在这家店当前菜单中不在售或今日售罄。可以换成：'+('、'.join(r['name'] for r in alternatives) or '其他门店或时段的餐品')+'。你想换哪一种？'
         return dict(entry=entry,rows=alternatives,message=message,selected=False)
-    if kind=='ambiguous' or (alias=='板烧' and any('麦满分' in r['name'] for r in rows)) or alias=='麦辣':
+    if len(selling)>1 and (kind=='ambiguous' or (alias=='板烧' and any('麦满分' in r['name'] for r in rows)) or alias=='麦辣'):
         return dict(entry=entry,rows=selling[:8],message=f'你说的 {alias} 是指哪种？我这边能找到的是：'+'、'.join(r['name'] for r in selling[:8])+'。'+entry.get('note',''),selected=False)
     exact=[r for r in selling if norm(r['name']) in [norm(t) for t in targets]]
     chosen=(exact or selling)[0]

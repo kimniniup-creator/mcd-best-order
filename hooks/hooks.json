@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__.*__(get_cart|place_orders)",
+        "matcher": "mcp__.*__(get_cart|place_orders)|mcp__(plugin_mcd-best-order_coupon-split|coupon-split)__(wait_payment|pay_card)$",
         "hooks": [
           {
             "type": "command",

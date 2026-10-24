@@ -63,7 +63,9 @@ def ensure_bridge(root):
                         if json.load(response).get('identity')==identity(root):return value['url']
                 except (OSError,ValueError):pass
             instance=uuid.uuid4().hex
-            env=dict(os.environ,COUPON_SPLIT_HOME=str(root),COUPON_SPLIT_STDIO='1',COUPON_SPLIT_BRIDGE_INSTANCE=instance,ALLOW_REAL_ORDERS='false',PYTHONUTF8='1')
+            # The inspector must retain the owner's mode to retract expiring
+            # unpaid orders. Read-only payment tools never perform this write.
+            env=dict(os.environ,COUPON_SPLIT_HOME=str(root),COUPON_SPLIT_STDIO='1',COUPON_SPLIT_BRIDGE_INSTANCE=instance,PYTHONUTF8='1')
             with (root/'bridge.stderr').open('ab') as log:
                 child=subprocess.Popen([sys.executable,'-m','coupon_split.bridge','--home',str(root),'--instance',instance],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
             _children[str(root)]=child
@@ -125,7 +127,7 @@ if __name__=='__main__':
     import argparse
     parser=argparse.ArgumentParser();parser.add_argument('--home');parser.add_argument('--instance');args=parser.parse_args()
     if args.home:
-        os.environ.update(COUPON_SPLIT_HOME=args.home,COUPON_SPLIT_STDIO='1',ALLOW_REAL_ORDERS='false',COUPON_SPLIT_BRIDGE_INSTANCE=args.instance or '')
+        os.environ.update(COUPON_SPLIT_HOME=args.home,COUPON_SPLIT_STDIO='1',COUPON_SPLIT_BRIDGE_INSTANCE=args.instance or '')
         sys.stderr=open(Path(args.home)/'bridge.stderr','a',encoding='utf-8')
         sys.stdout=open(os.devnull,'w')
     asyncio.run(run())

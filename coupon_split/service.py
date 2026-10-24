@@ -207,6 +207,7 @@ class Service:
         self.save(plan)
 
     async def _cancel(self, token, plan, only_expiring=False):
+        plan['rollback_scope']='expiring' if only_expiring else 'all'
         if not plan["dry_run"] and plan.get("unknown_orders"):
             await self._reconcile(token,plan)
         failed = bool(plan.get("unknown_orders"))
@@ -223,6 +224,9 @@ class Service:
                         continue
                     if str(current.get("status")) != "10":
                         order.update({k:current[k] for k in ('status','orderStatus','takeCode','pickupCode','orderCode','mealCode','expirePayTime') if k in current})
+                        continue
+                    if only_expiring and deadline(current.get('expirePayTime',order['expirePayTime'])) > time.time()+60:
+                        order.update(expirePayTime=current['expirePayTime'])
                         continue
                     result = await self.upstream.call(token, "cancel-order", {"orderId": order["orderId"], "cancelReasonCode": 3})
                     if result["data"].get("cancelResult") is not True:
@@ -274,7 +278,7 @@ class Service:
                     current = (await self.upstream.call(token, "query-order", {"orderId": order["orderId"]}))["data"]
                     order.update({k:current[k] for k in ["status", "orderStatus", "takeCode", "pickupCode", "orderCode", "mealCode", "expirePayTime"] if k in current})
             if plan["state"] == "rollback_pending" or any(deadline(o["expirePayTime"]) <= time.time()+60 and str(o.get("status")) == "10" for o in plan["orders"]):
-                return await self._cancel(token, plan,only_expiring=plan['state']!='rollback_pending')
+                return await self._cancel(token, plan,only_expiring=plan['state']!='rollback_pending' or plan.get('rollback_scope')=='expiring')
             plan['state']=payment_status(plan)
             self.save(plan)
             return plan

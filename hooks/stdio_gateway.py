@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.1/coupon_split-0.6.1-py3-none-any.whl'
+SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.2/coupon_split-0.6.2-py3-none-any.whl'
 ROOT=Path(__file__).resolve().parent
 
 
@@ -40,7 +40,7 @@ def main():
             if method=='initialize':
                 emit({'jsonrpc':'2.0','id':value['id'],'result':{
                     'protocolVersion':value['params']['protocolVersion'],
-                    'capabilities':{'tools':{}},'serverInfo':{'name':'最优下单','version':'0.6.1'},
+                    'capabilities':{'tools':{}},'serverInfo':{'name':'最优下单','version':'0.6.2'},
                     'instructions':'开始或修改点餐先调用 mcd_start，按 next_tool 和 next_arguments 同回合继续。报价后结束回合等用户确认；下一条“确认”或“确认下单 ¥金额”直接调用 place_orders，不调用 mcd_start。下单仍需 Claude Code/Codex 允许弹窗，禁止自主下单。'}})
             elif method=='tools/list':
                 emit({'jsonrpc':'2.0','id':value['id'],'result':{'tools':json.loads((ROOT/'tool-schema.json').read_text(encoding='utf-8'))}})
@@ -56,7 +56,7 @@ def main():
                     command=[*base[:3],*(['--offline'] if cached else []),*base[3:],'coupon-split-mcp']
                     worker=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True,encoding='utf-8',env=dict(os.environ))
                     threading.Thread(target=relay,daemon=True).start()
-                    worker.stdin.write(json.dumps({'jsonrpc':'2.0','id':-90001,'method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'coupon-split-gateway','version':'0.6.1'}}})+'\n');worker.stdin.flush()
+                    worker.stdin.write(json.dumps({'jsonrpc':'2.0','id':-90001,'method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'coupon-split-gateway','version':'0.6.2'}}})+'\n');worker.stdin.flush()
                     if not ready.wait(120) or worker.poll() is not None:
                         emit({'jsonrpc':'2.0','id':value['id'],'error':{'code':-32603,'message':'点餐服务启动失败，请检查 uv 和网络后重开对话。'}})
                         continue

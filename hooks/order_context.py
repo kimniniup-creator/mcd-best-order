@@ -82,6 +82,10 @@ def local_picker_url(sid):
 
 def handle(value):
     if value.get('hook_event_name')=='PreToolUse':
+        # Only this plugin's two side-effect-free payment reads bypass a prompt.
+        # Never allow a different server's same-named tool or any write tool.
+        if re.fullmatch(r'mcp__(?:plugin_mcd-best-order_coupon-split|coupon-split)__(?:wait_payment|pay_card)',value.get('tool_name','')):
+            return {'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'allow','permissionDecisionReason':'只读查询付款状态，不下单、不撤回。'}}
         if value.get('tool_name','').endswith('__place_orders'):
             return order_guard(value)
         if not value.get('tool_name','').endswith('__get_cart'):return {}

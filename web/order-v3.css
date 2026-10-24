@@ -408,3 +408,6 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .stepper button.plus span{background:none;color:inherit;border:0;box-shadow:none}
 
 .is-soldout .food__sub{color:var(--c-ink-2);font-weight:600}.is-soldout .food__img{opacity:.6}#add-recommendation[hidden]{display:none}
+
+/* Keep the visible switch compact inside a real 44px pointer target. */
+.switch.sw{height:44px;min-height:44px;border-radius:22px}.switch.sw i{top:10px}

@@ -244,8 +244,16 @@ def markdown(plan):
     if plan['state'] == 'cancelled':
         return "**已撤回。**\n本可省 " + money(plan.get('selected',{}).get('savings',0)) + "，已撤回。\n" + "\n".join(f"单 {i}｜{money(o['price'])}｜已撤回" for i,o in enumerate(plan['orders'],1))
     state={"awaiting_payment":"待支付","cancelled":"已撤回","rollback_pending":"撤回待核验","awaiting_coupon_return":"已撤回，退券待核验","paid":"已支付","placing":"处理中"}.get(plan["state"],"核验中")
-    rows = [f"订单状态：{state}。需依次支付 {len(plan['orders'])} 笔。"]
+    from coupon_split.payment import payment_state
+    snapshot=payment_state(plan)
+    paid=sum(o['state']=='paid' for o in snapshot['orders'])
+    rows = [snapshot['summary'] if paid else f"订单状态：{state}。需依次支付 {snapshot['pending_count']} 笔。"]
     for i,o in enumerate(plan["orders"],1):
+        view=snapshot['orders'][i-1]
+        if view['state']=='paid':
+            pickup='取餐码 '+str(view['pickup_code']) if view['pickup_code'] else '取餐码稍后在麦当劳 App 里查看'
+            rows.append(f"单 {i}｜{money(o['price'])}｜已付款（{pickup}）")
+            continue
         payment=public({'orders':[o]})['orders'][0]
         link = f"[打开付款页]({plan.get('payment_url','')})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
         rows.append(f"单 {i}｜{money(o['price'])}｜{o['orderStatus']}｜{link}｜{o['expirePayTime']} 前付款。")
