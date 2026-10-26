@@ -21,6 +21,13 @@ from coupon_split import diagnostics
 VERIFY_OFFSETS = (5, 15, 30, 60, 120)
 VERIFY_CONCLUDE = 120
 VERIFY_HARD_STOP = 180
+# Every verification query is bounded, and the whole verification by the wall clock
+# (placing_started + VERIFY_HARD_STOP), never by a count of rounds.
+VERIFY_QUERY_TIMEOUT = 10
+# While the order list cannot be read, the next try waits this long after the last one: 15 s after the
+# first failed read, 30 s after later ones (so roughly 120 / 150 / 180 s) instead of one try per status
+# call, which was 113 reads between 120 and 180 s in 0.7.2 and invites McDonald's rate limit.
+VERIFY_RETRY_GAPS = (15, 30)
 
 
 class NotSent(ValueError):
@@ -260,16 +267,23 @@ class Service:
         if specification_coverage(joined) != specification_coverage(demand):
             raise ValueError('下单前复核：商品码、规格或数量与原始需求不一致')
 
-    async def _reconcile(self, token, plan):
+    async def _ask(self, token, name, args, deadline_at=None):
+        """One bounded upstream read: at most VERIFY_QUERY_TIMEOUT s and never past the wall-clock deadline."""
+        budget = VERIFY_QUERY_TIMEOUT if deadline_at is None else min(VERIFY_QUERY_TIMEOUT, deadline_at - time.time())
+        if budget <= 0:
+            raise TimeoutError('verification deadline reached')
+        return await asyncio.wait_for(self.upstream.call(token, name, args), budget)
+
+    async def _reconcile(self, token, plan, deadline_at=None):
         """Match the account's new orders to unresolved requests. Only a unique match counts."""
         from collections import Counter
         from decimal import Decimal
         info = {"ok": False, "ambiguous": False}
+        still = list(plan.get("pending_requests", []))
         try:
-            rows = (await self.upstream.call(token,"order-list",{}))["data"]["list"]
+            rows = (await self._ask(token, "order-list", {}, deadline_at))["data"]["list"]
             excluded = set(plan.get("before_order_ids",[])) | {o["orderId"] for o in plan["orders"]}
-            remaining=[]
-            for pending in plan.get("pending_requests",[]):
+            for pending in list(still):
                 expected=Counter()
                 for i in pending["request"]["items"]:
                     expected[i["productCode"]]+=i["quantity"]
@@ -290,35 +304,45 @@ class Service:
                         matches.append(r)
                 if len(matches) != 1:
                     info["ambiguous"] = info["ambiguous"] or len(matches) > 1
-                    remaining.append(pending)
                     continue
                 r=matches[0]
-                detail=(await self.upstream.call(token,"query-order",{"orderId":r["orderId"]}))["data"]
+                detail=(await self._ask(token,"query-order",{"orderId":r["orderId"]},deadline_at))["data"]
                 plan["orders"].append(dict(detail,orderId=r["orderId"],price=pending["price"],productList=pending["productList"]))
+                still.remove(pending)
                 excluded.add(r["orderId"])
-            plan["pending_requests"]=remaining
-            plan["unknown_orders"]=bool(remaining)
             info["ok"] = True
         except Exception:
             # Reading the list failed this round; it neither proves nor disproves an order.
             plan["verify_errors"] = plan.get("verify_errors", 0) + 1
+        plan["pending_requests"]=still
+        plan["unknown_orders"]=bool(still)
         if plan.get("unknown_orders"):
             plan["reconciliation_notice"]="有下单结果不明的请求，正在按账户订单核对；请勿重新下单。"
         self.save(plan)
         return info
 
     async def _verify(self, token, plan):
-        """Scheduled convergence of an unknown outcome: ends within VERIFY_HARD_STOP seconds."""
-        elapsed = time.time() - (plan.get("placing_started") or time.time())
+        """Scheduled convergence of an unknown outcome: ends by the wall clock at VERIFY_HARD_STOP seconds."""
+        started = plan.get("placing_started") or time.time()
+        deadline_at = started + VERIFY_HARD_STOP
+        elapsed = time.time() - started
+        if elapsed >= VERIFY_HARD_STOP:
+            return await self._conclude(token, plan, 'manual')
         checks = plan.setdefault("verify_checks", [])
         due = [o for o in VERIFY_OFFSETS if o <= elapsed and o not in checks]
         final_phase = elapsed >= VERIFY_CONCLUDE
-        if not due and not (final_phase and not plan.get("verify_read_ok")):
-            if elapsed >= VERIFY_HARD_STOP:
-                return await self._conclude(token, plan, 'manual')
+        streak = plan.get("verify_fail_streak", 0)
+        retry = False
+        if not due and final_phase and not plan.get("verify_read_ok") and streak:
+            gap = VERIFY_RETRY_GAPS[min(streak, len(VERIFY_RETRY_GAPS)) - 1]
+            retry = time.time() - plan.get("verify_last_try", 0) >= gap
+        if not due and not retry:
             return plan
         checks.extend(due)
-        info = await self._reconcile(token, plan)
+        info = await self._reconcile(token, plan, deadline_at)
+        plan["verify_last_try"] = time.time()
+        plan["verify_fail_streak"] = 0 if info["ok"] else streak + 1
+        elapsed = time.time() - started
         if info["ok"] and elapsed >= 100:
             plan["verify_read_ok"] = True
         if not plan.get("pending_requests"):

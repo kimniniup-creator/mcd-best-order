@@ -422,32 +422,24 @@ async def get_evidence(plan_id: str, evidence_id: str) -> CallToolResult:
     return result({"evidence":scrub(value),"notice":"券标识已脱敏，重放请用本机证据库"},"券标识已脱敏，重放请用本机证据库。")
 
 
-@mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
-    """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
-    t=token(); plan=service.load(plan_id,t)
-    import re
+async def prepare_place(t, plan, option_id, confirm_token, take_way=''):
+    """Every check that must pass before an order may be created; raises ValueError. Returns the chosen option."""
     selected=next(p for p in plan['plans'] if p['option_id']==option_id)
-    from coupon_split.confirmation import validate_confirmation
-    # After the confirmation link was issued, the follow-up call carries whatever the user said last
-    # ("好了"); the wording was validated when the link was issued and the click is what counts now.
-    if not (plan['state']=='quoted' and confirmations.find_any(owner(t),plan_id,option_id,selected['price'])):
-        validate_confirmation(user_confirmation,selected['price'],high_amount_confirmation)
     if take_way:
         import hmac
         if not hmac.compare_digest(confirm_token,plan['confirm_token']):raise ValueError('确认凭证不匹配')
-        selected=next(p for p in plan['plans'] if p['option_id']==option_id)
         if any(take_way not in {v.get('code',v.get('takeWayCode')) for v in o['takeWayList']} for o in selected['orders']):raise ValueError('请选择本次官方堂食/外带选项')
         plan['order_elements']['takeWayCode']=take_way
         plan['order_elements']['sources']['takeWayCode']='utterance'
         plan.update(elements_pending=[],elements_validated=True);service.save(plan)
-    selected=next(p for p in plan['plans'] if p['option_id']==option_id)
     service.validate_before_place(plan,selected)
     for order in selected['orders']:
         await validate_selected(t,plan['storeCode'],order['request']['items'],order['request'],fill_defaults=False)
-    if plan['state']=='quoted':
-        pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation))
-        if pending is not None:return pending
+    return selected
+
+
+async def finish_place(t, plan_id, confirm_token, option_id):
+    """Create the order(s) and keep the local memory in step. Runs on the person's click, or right after an approved dialog."""
     plan = await service.place(t,plan_id,confirm_token,option_id)
     await attach_payment_url(plan)
     if plan.get('orders'):
@@ -456,6 +448,81 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
             'store_code':plan['storeCode'],'items':copy.deepcopy(plan.get('requested_items',[])),
             'item_summary':state.get('item_summary','')}
         memory.write(owner(t),state)
+    return plan
+
+
+def withdrawal_text(plan):
+    state=plan['state']
+    if state in {'cancelled','awaiting_coupon_return'}:
+        return '好的，已经按你的意思撤回这笔订单，没扣钱。' if not plan.get('dry_run') else '好的，已经撤回（模拟订单，本来就没有真实扣款）。'
+    if state=='verifying':
+        return '好的，不下单。刚才的下单结果还在向麦当劳核对中，已记下撤回要求：订单一出现就会自动撤回，请不要重新下单。'
+    if state=='rollback_pending':
+        return '你说不下单，但撤回还没有成功，系统会继续重试。保险起见请打开微信麦当劳小程序 → 我的订单，看到待付款的单就点取消，不要付款。'
+    if state in {'paid','partially_completed'}:
+        return '这笔订单已经付款，没法在这里撤回。需要退款请在微信麦当劳小程序 → 我的订单里申请。'
+    if state=='place_failed':
+        return '好的，不下单。这单本来就没有下成，没扣钱。'
+    return '好的，不下单。'
+
+
+async def withdraw_order(t, plan, option_id):
+    """Rule 1 of the decision order: the user's latest words refuse or retract the order."""
+    from coupon_split.service import owner as owner_of
+    account=owner_of(t)
+    revoked=confirmations.revoke(account,plan['plan_id'])
+    if plan['state']=='quoted':
+        # Nothing exists yet: refuse the call. The plan stays quoted; a later explicit confirmation starts afresh.
+        raise ValueError('用户表示不下单或要先等一等，订单没有创建，之前的确认页已作废（作废 %d 个）。方案还保留着。请先在对话中明确确认下单：用户重新说“确认”后才会重新开始，在那之前不要再调用 place_orders。'%revoked)
+    if plan['state']=='placing':
+        # A click is being processed right now; let it finish, then withdraw what it created.
+        for _ in range(100):
+            await asyncio.sleep(.1)
+            plan=service.load(plan['plan_id'],t)
+            if plan['state']!='placing':break
+    if plan['state'] in {'awaiting_payment','verifying','rollback_pending'} and (plan.get('orders') or plan.get('unknown_orders')):
+        plan=await service.cancel(t,plan['plan_id'])
+    note=withdrawal_text(plan)
+    data=dict(public(plan),withdrawn=True,next_tool=None)
+    if plan['state'] in {'verifying'}:
+        data.update(next_tool='wait_payment',next_arguments={'plan_id':plan['plan_id'],'timeout':60})
+    return result(data,note+'\n\n'+markdown(plan))
+
+
+@mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。用户说别下单/不要了/取消/等等，同样逐字传入，服务端会中止或撤回。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+    """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
+    t=token(); plan=service.load(plan_id,t)
+    from coupon_split import confirmation as cf
+    selected=next(p for p in plan['plans'] if p['option_id']==option_id)
+    # Decision order, see coupon_split/confirmation.py. 1: withdrawal beats everything else.
+    if cf.is_negative(user_confirmation):
+        return await withdraw_order(t,plan,option_id)
+    if plan['state']=='quoted':
+        # M03: a wrong credential or an expired quote is refused on the very first call, before any confirmation page exists.
+        import hmac
+        if not hmac.compare_digest(str(confirm_token),plan['confirm_token']):
+            raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。请重新调用 quote_best 获取新报价，再让用户确认。')
+        if time.time()-plan['created']>600:
+            raise ValueError('报价已过期（超过 10 分钟），价格和优惠可能已变。请重新调用 quote_best 获取新报价，再让用户确认。')
+        failure=confirmations.take_failure(owner(t),plan_id)
+        if failure:raise ValueError(failure)
+        # 3: a live confirmation page exists, the click authorises; 4: otherwise the wording must confirm.
+        if confirmations.find_any(owner(t),plan_id,option_id,selected['price']):
+            cf.validate_follow_up(user_confirmation,selected['price'])
+        else:
+            cf.validate_confirmation(user_confirmation,selected['price'],high_amount_confirmation)
+        try:
+            selected=await prepare_place(t,plan,option_id,confirm_token,take_way)
+        except ValueError as exc:
+            if '授权失效' not in str(exc):raise
+            # Dead account authorisation is reported now, with the page that fixes it, not at some later step.
+            url=await local_url()
+            return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'},'next_tool':None},f'麦当劳账户授权已失效，订单没有创建。请重新连接：[打开授权页]({url}/setup)。保存后回来说“好了”，再重新报价确认。')
+        pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation))
+        if pending is not None:return pending
+    # 2: not quoted any more means the click already placed it; this only reads the result back.
+    plan = await finish_place(t,plan_id,confirm_token,option_id)
     data=public(plan)
     if plan.get('dry_run'):data.update(next_tool=None,payment_wait_skipped=True)
     if plan['state']=='verifying':
@@ -1237,6 +1304,19 @@ async def favicon(request):
     return FileResponse(ROOT/"web/favicon.svg")
 
 
+async def wait_click_outcome(key, seconds=30):
+    """The click is being processed (possibly by the page process). Wait for the order to exist, never place twice."""
+    until=time.monotonic()+seconds
+    while time.monotonic()<until:
+        current=confirmations.get(key)
+        if current['state']=='used':return None
+        if current['state']=='failed':
+            confirmations.transition(key,'failure_reported',('failed',))
+            raise ValueError(current.get('error') or '确认后下单没有成功，订单没有创建。')
+        await asyncio.sleep(.2)
+    raise ValueError('订单还在创建中，请稍后调用 wait_payment 或再次 place_orders 查看结果；不要重新报价下单。')
+
+
 async def human_confirmation(ctx, t, plan, selected, option_id, call_args):
     """Server-side, human-completed confirmation. None means: go ahead and place the order.
 
@@ -1251,9 +1331,13 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args):
     account=owner(t)
     record=confirmations.find(account,plan['plan_id'],option_id,take,price)
     if record and record['state']=='approved':
-        confirmations.set_state(record['key'],'used',only_from=('approved',))
-        return None
+        # Approved but not yet placed (the page process could not place it): exactly one process claims it.
+        if confirmations.transition(record['key'],'used',('approved',)):return None
+        record=confirmations.get(record['key'])
+    if record and record['state']=='placing':
+        return await wait_click_outcome(record['key'])
     if record and record['state']=='declined':
+        confirmations.transition(record['key'],'revoked',('declined',))
         raise ValueError('你在确认页选择了先不下单，订单没有创建。想下单请重新说“确认”。')
     summary=hc.order_summary(plan,selected,take)
     if record is None and hc.supports_elicitation(ctx):
@@ -1275,22 +1359,58 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args):
         until=time.monotonic()+float(os.environ.get('COUPON_SPLIT_CONFIRM_WAIT','50'))
         while time.monotonic()<until:
             current=confirmations.get(record['key'])
-            if current['state']=='approved':
-                confirmations.set_state(current['key'],'used',only_from=('approved',))
+            if current['state']=='approved' and confirmations.transition(current['key'],'used',('approved',)):
                 return None
-            if current['state'] in {'declined','expired'}:
-                raise ValueError('你在确认页选择了先不下单，订单没有创建。' if current['state']=='declined' else '确认已过期，请重新说“确认”。')
+            if current['state'] in {'placing','used'}:
+                return await wait_click_outcome(current['key'])
+            if current['state'] in {'declined','expired','revoked','failed'}:
+                if current['state']=='failed':
+                    confirmations.transition(current['key'],'failure_reported',('failed',))
+                    raise ValueError(current.get('error') or '确认后下单没有成功，订单没有创建。')
+                raise ValueError('你在确认页选择了先不下单，订单没有创建。' if current['state']=='declined' else '确认已过期，请重新说“确认”。' if current['state']=='expired' else '你已经撤销了这次下单，订单没有创建。想下单请重新说“确认”。')
             await asyncio.sleep(.5)
     link=(await local_url())+'/confirm/'+record['key']
     text=('**还差最后一步：请你本人在浏览器里确认下单。**\n\n'
           f'[打开确认下单页]({link})\n\n'
           f"页面上会再显示一遍 {summary['store']} 的餐品和实付 ¥{summary['price_yuan']}，点“确认下单”后我才会创建订单；不点就不会下单。"
-          '点完回到这里说一声“好了”。')
+          '点完订单立刻创建，不用回来说话；想中止就在这里说“别下单”。')
     if not summary['real']:text+='\n\n当前为模拟模式，不会产生真实订单。'
     data={'stage':'confirm','state':'confirm_required','plan_id':plan['plan_id'],'confirm_url':link,'next_tool':'place_orders',
           'next_arguments':{k:v for k,v in call_args.items() if v},
-          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。不要自己打开、提交或代替用户点这个页面。'}
+          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。用户点“确认下单”的那一刻订单就会创建，不用再等用户回来说话。不要自己打开、提交或代替用户点这个页面；用户说别下单/不要了/取消/等等，把原话逐字传给 place_orders。'}
     return result(data,text)
+
+
+def token_for_owner(account):
+    """The credential of exactly this account, if this process holds it; never any other."""
+    if UPSTREAM_TOKEN and owner(UPSTREAM_TOKEN)==account:return UPSTREAM_TOKEN
+    return active_credentials.get(account)
+
+
+async def approve_and_place(record, plan):
+    """The person clicked "确认下单": create the order now, not on some later call.
+
+    If this process cannot place it safely (other account, or a different real/simulated
+    mode than the one that quoted), the approval stays for the MCP process to claim.
+    """
+    key=record['key']
+    t=token_for_owner(record['owner'])
+    can_place=t is not None and bool(plan.get('real_orders_enabled'))==upstream.allow_real
+    if not can_place:
+        done=confirmations.transition(key,'approved',('pending',))
+        return {'state':(done or confirmations.get(key))['state']}
+    claimed=confirmations.transition(key,'placing',('pending',))
+    if not claimed:
+        return {'state':confirmations.get(key)['state']}
+    try:
+        await prepare_place(t,plan,record['option_id'],plan['confirm_token'])
+        await finish_place(t,record['plan_id'],plan['confirm_token'],record['option_id'])
+    except Exception as exc:
+        from coupon_split import diagnostics
+        confirmations.transition(key,'failed',('placing',),error='点击确认后下单没有成功，订单没有创建：'+diagnostics.scrub_text(exc))
+        return {'state':'failed'}
+    confirmations.transition(key,'used',('placing',))
+    return {'state':'used'}
 
 
 async def confirm_page(request):
@@ -1304,12 +1424,15 @@ async def confirm_page(request):
         site=request.headers.get('sec-fetch-site','same-origin')
         if origin!='http://'+request.headers.get('host','') or site not in {'same-origin','none'}:
             return JSONResponse({'error':'只能在确认页上点击'},status_code=403,headers=headers)
-        state='approved' if path.endswith('/approve') else 'declined'
-        if state=='approved':
+        if path.endswith('/approve'):
             plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans WHERE id=?',(record['plan_id'],))),None)
             if not plan or plan['state']!='quoted':
                 return JSONResponse({'error':'这份报价已经处理过或已失效'},status_code=409,headers=headers)
-        record=confirmations.set_state(key,state)
+            if time.time()-plan['created']>600:
+                confirmations.transition(key,'expired',('pending','approved'))
+                return JSONResponse({'error':'报价已过期，请回到对话重新报价','state':'expired'},status_code=409,headers=headers)
+            return JSONResponse(await approve_and_place(record,plan),headers=headers)
+        record=confirmations.set_state(key,'declined')
         return JSONResponse({'state':record['state']},headers=headers)
     if path.endswith('/state'):
         return JSONResponse({'state':record['state'],'summary':record['summary']},headers=headers)

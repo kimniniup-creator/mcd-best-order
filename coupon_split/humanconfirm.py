@@ -51,35 +51,72 @@ class ConfirmationStore:
                       take_way=take_way or '', price=price, summary=summary, state='pending', created=time.time())
         return self._save(record)
 
+    def _rows(self, owner, plan_id):
+        with self._db() as db:
+            rows = [json.loads(body) for (body,) in db.execute('SELECT body FROM confirmations')]
+        return sorted((r for r in rows if r['owner'] == owner and r['plan_id'] == plan_id), key=lambda r: r['created'], reverse=True)
+
     def find(self, owner, plan_id, option_id, take_way, price):
         """Newest live record for exactly this order (same plan, option, pickup way and price)."""
-        with self._db() as db:
-            rows = [json.loads(body) for (body,) in db.execute('SELECT body FROM confirmations')]
-        rows = [r for r in rows if (r['owner'], r['plan_id'], r['option_id'], r['take_way'], r['price']) == (owner, plan_id, option_id, take_way or '', price)]
-        for record in sorted(rows, key=lambda r: r['created'], reverse=True):
-            current = self.get(record['key'])
-            if current['state'] in {'pending', 'approved', 'declined'}:
-                return current
-        return None
-
-    def find_any(self, owner, plan_id, option_id, price):
-        """A live pending/approved record for this plan, whatever the pickup way."""
-        with self._db() as db:
-            rows = [json.loads(body) for (body,) in db.execute('SELECT body FROM confirmations')]
-        for record in sorted(rows, key=lambda r: r['created'], reverse=True):
-            if (record['owner'], record['plan_id'], record['option_id'], record['price']) == (owner, plan_id, option_id, price):
+        for record in self._rows(owner, plan_id):
+            if (record['option_id'], record['take_way'], record['price']) == (option_id, take_way or '', price):
                 current = self.get(record['key'])
-                if current['state'] in {'pending', 'approved'}:
+                if current['state'] in {'pending', 'approved', 'placing', 'declined'}:
                     return current
         return None
 
-    def set_state(self, key, state, only_from=('pending',)):
-        record = self.get(key)
-        if not record or record['state'] not in only_from:
+    def find_any(self, owner, plan_id, option_id, price):
+        """A live pending/approved/placing record for this plan, whatever the pickup way."""
+        for record in self._rows(owner, plan_id):
+            if (record['option_id'], record['price']) == (option_id, price):
+                current = self.get(record['key'])
+                if current['state'] in {'pending', 'approved', 'placing'}:
+                    return current
+        return None
+
+    def transition(self, key, state, only_from=('pending',), **extra):
+        """Atomic compare-and-set across processes. Returns the new record, or None if the state did not match.
+
+        Two processes (the page service and the stdio server) may both try to act on a click;
+        exactly one wins, so one approval can only ever place one order.
+        """
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT body FROM confirmations WHERE key=?', (key,)).fetchone()
+            if not row:
+                return None
+            record = json.loads(row[0])
+            if time.time() - record['created'] > TTL_SECONDS and record['state'] in {'pending', 'approved'}:
+                record['state'] = 'expired'
+                db.execute('INSERT OR REPLACE INTO confirmations VALUES (?,?)', (key, json.dumps(record, ensure_ascii=False)))
+                return None
+            if record['state'] not in only_from:
+                return None
+            record['state'] = state
+            record[state + '_at'] = time.time()
+            record.update(extra)
+            db.execute('INSERT OR REPLACE INTO confirmations VALUES (?,?)', (key, json.dumps(record, ensure_ascii=False)))
             return record
-        record['state'] = state
-        record[state + '_at'] = time.time()
-        return self._save(record)
+
+    def set_state(self, key, state, only_from=('pending',)):
+        return self.transition(key, state, only_from) or self.get(key)
+
+    def revoke(self, owner, plan_id):
+        """The person withdrew in conversation: every live confirmation of this plan stops being usable."""
+        count = 0
+        for record in self._rows(owner, plan_id):
+            if self.transition(record['key'], 'revoked', ('pending', 'approved', 'declined')):
+                count += 1
+        return count
+
+    def take_failure(self, owner, plan_id):
+        """The click happened but the order could not be created: tell the agent once."""
+        for record in self._rows(owner, plan_id):
+            if record['state'] == 'failed':
+                done = self.transition(record['key'], 'failure_reported', ('failed',))
+                if done:
+                    return done.get('error') or '确认后下单没有成功，订单没有创建。'
+        return None
 
 
 def client_name(ctx):

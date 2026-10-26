@@ -130,6 +130,14 @@ def last_user_message(path):
     return latest
 
 
+# Same pattern as coupon_split.confirmation.NEGATIVE (a test keeps them identical): a retraction is never blocked here,
+# the server turns it into a refusal or a withdrawal.
+NEGATIVE = re.compile(
+    r'先别|别(?:下|买|点|订|了|急|等|动)|不(?:要了|下|买|订|点了|用了|必了|想(?:要|下|买)?了|确认|同意|行|对)|不要[。！!\s]*$|先不|暂时不|暂不'
+    r'|取消|算了|撤回|撤销|反悔|改主意|等等|等一下|等会|稍等|先等|停一下|停下|想想|考虑一下|再看看'
+    r'|\b(?:no|nope|cancel|stop|wait|never\s*mind|hold\s*on|don\'?t|do\s*not)\b', re.I)
+
+
 def order_guard(value):
     """Fail closed using the transcript and read-only local plan, never model prose."""
     def deny(reason):
@@ -144,6 +152,8 @@ def order_guard(value):
         try:text=last_user_message(value.get('transcript_path',''))
         except OSError:return ask('读不到对话记录，无法核对你的确认原话。请你本人核对方案和金额后选择是否允许下单。')
         # Whole-message matching rejects questions, quotes and negated consent.
+        if text and NEGATIVE.search(text) and value.get('tool_input',{}).get('user_confirmation')==text:
+            return {}
         normalized=re.sub(r'[。！!，,\s]','',text or '')
         if not re.fullmatch(r'(?:确认(?:下单)?|同意下单|就这样下单)(?:[¥￥]?\d+\.\d{2})?',normalized):
             return deny('最后一条用户消息没有明确确认下单，请先展示报价并等待用户确认。')

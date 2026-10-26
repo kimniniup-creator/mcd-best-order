@@ -15,7 +15,7 @@
 也可自己运行（先预览，核对目标后再加 `--apply`）：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl coupon-split setup --host cursor
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host cursor
 ```
 
 Codex 的 IDE/CLI 一键方式是 `--host codex-ide`（同时装 Skill，建议使用）；没有 Skill 的宿主上，笼统的一句话可能不会立刻触发点餐工具，可以说得具体些（例如“我要吃麦当劳，来份板烧”）。
@@ -112,7 +112,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件配置工具权限。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单和撤回仍保留逐次允许；wait_payment 和 pay_card 只读查询无需逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -120,7 +120,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -138,7 +138,8 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 
 ## 确认、付款、撤回
 
-- 先核对报价里的门店、规格、数量、餐具和时间，再回复“确认”。总额超过 ¥200 时，回复报价给出的完整句子，例如 `确认下单 ¥201.00`，金额保留两位小数。随后还要你本人再点一次“确认下单”：Claude Code 会弹出允许框；其他 Agent 会弹出确认框，或给你一个本机浏览器确认页（点完回对话说“好了”）。没有这一次点击就不会下单，Agent 自己写“确认”不算数。
+- 先核对报价里的门店、规格、数量、餐具和时间，再回复“确认”。总额超过 ¥200 时，回复报价给出的完整句子，例如 `确认下单 ¥201.00`，金额保留两位小数。随后还要你本人再点一次“确认下单”：Claude Code 会弹出允许框；其他 Agent 会弹出确认框，或给你一个本机浏览器确认页。**你点“确认下单”的那一刻订单就创建，不用再回对话说话，中间没有等待窗口。** 没有这一次点击就不会下单，Agent 自己写“确认”不算数。
+- 下单前后改主意：只要你在对话里说“别下单”“不要了”“取消”“等等”，服务端按固定顺序处理——先看这句话，再看别的。订单还没建：确认页作废，不会下单，之后你重新说“确认”才会重新开始；订单已经建成：立刻撤回并告诉你结果（已撤回 / 正在核对中，一出现就撤回 / 已付款无法撤回，需要在小程序申请退款）。这条规则优先于确认页上的点击、宿主弹窗和 Claude Code 的批准。
 - 必须安装麦当劳 App。下单后打开本机付款页，在 15 分钟内付款；电脑用手机里的麦当劳 App 扫一扫（推荐）或微信扫码，手机可点“打开麦当劳 App 付款”。拆单时按页面提示逐笔支付，钱直接付给麦当劳。
 - 页面与对话助手会自动等待并更新状态；临近到期仍未付会自动撤回。备选入口是微信麦当劳小程序 → 我的订单（已见到本插件建的订单，能否直接付款待实测；麦当劳 App 的订单页目前可能看不到），这个入口及本人真实付款、付款后取餐码待手机实测。
 - 本机付款页需要点餐服务保持运行。手机中的 localhost 指手机自己，不能直接打开电脑的本机链接；电脑用户请直接用手机扫码，不要复制本机链接到手机。
@@ -148,13 +149,22 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 
 ## 出问题怎么办
 
-下单或撤回出了问题，在终端执行下面的命令，导出一份去掉了 Token、完整订单号、券码和付款链接的诊断文件，发给开发（发之前自己打开看一眼，里面应该只有状态、商品码、时间、耗时和麦当劳返回的错误原因）：
+下单或撤回出了问题，在终端执行下面的命令，导出一份诊断文件，发给开发。文件按白名单字段生成（状态、商品码和数量、时间、耗时、错误码、原因标签如 `rate-limited`），不含 Token、订单号、券码、地址、门店名和地址、手机号、姓名、付款链接，也不复制麦当劳的原话；发之前自己打开看一眼：
 
 ```text
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl coupon-split diagnose
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split diagnose
 ```
 
-文件保存在用户主目录，名为 `mcd-order-diagnosis-<时间>.json`。本机的 `orders.log`（在点餐状态目录里）每次下单、撤回只记录耗时、HTTP 状态、麦当劳的错误码和说明、traceId。
+文件保存在用户主目录，名为 `mcd-order-diagnosis-<时间>.json`。本机的 `orders.log`（在点餐状态目录里，不会被导出原文）每次下单、撤回只记录耗时、HTTP 状态、麦当劳的错误码和说明、traceId。
+
+## 宿主已知限制
+
+- **Codex 无头模式（`codex exec`）会“挂起”，原因在宿主和模型服务，不在本插件**（0.7.3 隔离实测，Codex 0.162.1）：
+  1. 从脚本、CI 或别的 Agent 里启动 `codex exec "<提示>"` 时，如果标准输入是一根没有关闭的管道，Codex 会在日志里写 `Reading additional input from stdin...` 并一直等输入结束，整轮不开始。启动时务必关闭标准输入：PowerShell 用 `codex exec ... < NUL`，bash 用 `< /dev/null`，Python 用 `stdin=subprocess.DEVNULL`。
+  2. 模型服务返回 `429 Too Many Requests`（`exceeded retry limit, last status: 429`）时，`--json` 输出里只有 `thread.started`、`turn.started`，之后什么都没有，也不报错；表现就是“卡住”。这是账号或模型的限流或容量问题。换一个可用的模型、稍后重试，脚本里给每一轮设超时并重试。
+  本插件已经把单次工具等待控制在宿主超时以内（`get_cart` 约 25 秒，`wait_payment` 最多 60 秒，确认页等待约 50 秒），隔离实测 Codex 在 20、58、65、125 秒的工具调用里都正常返回；无头模式下 Codex 对 MCP 确认弹窗（elicitation）立即回复“拒绝”，本插件随即给出本机确认页，不会卡住。
+- **Claude Code 无头模式（`claude -p`）** 无法弹出 `place_orders` 要求的人工批准，所以走不到下单这一步；请在交互界面使用，或用本机确认页的宿主（Codex、Cursor、dsh 等）。
+- 没有批准弹窗也不支持 elicitation 的宿主，一律走本机浏览器确认页，点击后立即下单。
 
 ## 装坏了怎么恢复
 
@@ -170,14 +180,14 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.2 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.2)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.3 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.3)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。

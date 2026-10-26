@@ -104,8 +104,8 @@ def main():
         from coupon_split.diagnostics import export
         from coupon_split.local import state_dir
         target=export(state_dir(),args.out)
-        print('已导出（不含 Token、完整订单号、券码、付款链接）：'+str(target))
-        print('发给开发前请先打开看一眼：里面应该只有状态、商品码、时间、耗时和麦当劳返回的错误原因。')
+        print('已导出（按白名单字段生成，不含 Token、订单号、券码、地址、门店、手机号、姓名、付款链接）：'+str(target))
+        print('发给开发前请先打开看一眼：里面只有状态、商品码、数量、时间、耗时、错误码和原因标签（如 rate-limited），没有麦当劳的原话、地址、门店、订单号或券码。')
         return
     if args.action=='doctor':
         preflight()
