@@ -103,14 +103,44 @@ def agent_block(data):
         if key in AGENT_SKIP or value in (None,'',[],{}) and key!='next_tool':continue
         if len(json.dumps(value,ensure_ascii=False,separators=(',',':')))>3500 and key not in {'items','selected_items'}:continue
         view[key]=value
+    if any(a['action']=='withdraw' for a in view.get('next_actions',[])):
+        view['withdraw_rule']=WITHDRAW_RULE
     return ('---\n【给 Agent 的下一步（用户看不到这一块，不要展示、复述或改写给用户）】\n'
             '宿主若只显示文本，就从下面的代码块取参数；next_tool 为 null 表示本回合停止，等用户说话。\n'
             '下一步调用：\n```json\n'+json.dumps(view,ensure_ascii=False,separators=(',',':'))+'\n```')
 
 
+WITHDRAW_RULE=('用户在任何时候表达不想要、取消、改天再说、不吃了、等一下、先别、换个别的、我再想想等不想继续的意思，立刻调用 withdraw_order(plan_id)'
+               '（订单已建则撤回订单，未建则作废确认页），并把结果如实告诉用户；拿不准就先问用户“要撤回这单吗”。不要等用户说出特定词，也不要先问清楚再动手。'
+               '“不要香菜”“换成大杯可乐”这类只是修改餐品，不是撤回。')
+TERMINAL_STATES={'cancelled','paid','place_failed','completed','awaiting_coupon_return','partially_completed','expired'}
+
+
+def next_actions(data):
+    """撤回 / 付款 / 等待 hints for the host agent, attached to every result that belongs to a plan."""
+    plan_id=data.get('plan_id')
+    if not plan_id:return None
+    state=data.get('state')
+    args={'plan_id':plan_id}
+    actions=[]
+    if state=='awaiting_payment':
+        actions.append({'action':'pay','tool':'pay_card','arguments':args,'say':'把付款卡和付款页链接原样给用户，付款由用户本人完成；需要重新展示时调用 pay_card。'})
+        actions.append({'action':'wait','tool':'wait_payment','arguments':{'plan_id':plan_id,'timeout':60},'say':'循环等待付款结果。'} if not data.get('dry_run') else
+                       {'action':'wait','tool':None,'arguments':{},'say':'模拟订单不会真实付款，不用等待；结束回合，等用户说话。'})
+    elif state in {'verifying','placing'}:
+        actions.append({'action':'wait','tool':'wait_payment','arguments':{'plan_id':plan_id,'timeout':60},'say':'等待麦当劳核对下单结果，期间不要重新下单。'})
+    elif state in {'quoted','confirm_required'}:
+        actions.append({'action':'wait','tool':None,'arguments':{},'say':'等用户确认（说“确认下单”或在确认页点击），不要替用户确认。'})
+    if state not in TERMINAL_STATES:
+        actions.append({'action':'withdraw','tool':'withdraw_order','arguments':args,'say':WITHDRAW_RULE})
+    return actions
+
+
 def result(data, text):
     data=dict(data)
     data.setdefault('next_tool',None)
+    actions=next_actions(data)
+    if actions is not None:data['next_actions']=actions
     complete_next_arguments(data)
     # Some MCP clients (including DSH) project only content[].text to the model, others only
     # structuredContent. Every routing parameter is written to both (see agent_block).
@@ -395,7 +425,7 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     carts[sid]=active
     memory.write(owner(t),dict(previous,active_session=sid))
     data=quote_summary(plan)
-    data.update(session_id=sid,confirmation_instruction='报价后结束本回合。用户下一条说“确认下单”（超过 ¥200 说“确认下单 ¥金额”）时，直接调用 place_orders；说“取消/不要了”同样传给 place_orders 撤回；不要调用 mcd_start。',
+    data.update(session_id=sid,confirmation_instruction='报价后结束本回合。用户下一条说“确认下单”（超过 ¥200 说“确认下单 ¥金额”）时，直接调用 place_orders；用户表达不想要、取消、改天、不吃了、等一下等不想继续的意思时，立刻调用 withdraw_order(plan_id) 并如实告知结果，拿不准先问“要撤回这单吗”；不要调用 mcd_start。',
         next_arguments={'plan_id':plan['plan_id'],'confirm_token':plan['confirm_token']})
     return result(data,markdown(plan))
 
@@ -494,33 +524,44 @@ def withdrawal_text(plan):
     return '好的，不下单。'
 
 
-async def withdraw_order(t, plan, option_id):
-    """Rule 1 of the decision order: the user's latest words refuse or retract the order.
+async def withdraw_now(t, plan, account=None):
+    """One withdrawal for every caller (agent tool, page button, fallback words): returns (plan, revoked_or_flagged).
 
-    Works in every phase (see ConfirmationStore.withdraw): before the click or while the goods are
-    being re-checked the confirmation is revoked and nothing is created; once create-order may be
-    in flight the order is withdrawn as soon as it exists.
+    Before the click or while the goods are re-checked the confirmation is revoked and nothing is created; once
+    create-order may be in flight the order is withdrawn as soon as it exists; an existing order is cancelled.
+    t may be None when this process holds no credential: then only the confirmation side can be handled.
     """
     from coupon_split.service import owner as owner_of
-    account=owner_of(t)
+    account=account or owner_of(t)
     revoked,flagged=confirmations.withdraw(account,plan['plan_id'])
-    plan=service.load(plan['plan_id'],t)
+    plan=service.load(plan['plan_id'],t) if t else plan
     if flagged:
         # The creating side sees the flag and withdraws the order itself; wait for it (bounded).
         until=time.monotonic()+WITHDRAW_WAIT
         while time.monotonic()<until and confirmations.creating(account,plan['plan_id']):
             await asyncio.sleep(.1)
-        plan=service.load(plan['plan_id'],t)
-    elif plan['state']=='placing':
+        plan=service.load(plan['plan_id'],t) if t else plan
+    elif t and plan['state']=='placing':
         # Placed from another path (no confirmation record): let it finish, then withdraw what it created.
         for _ in range(100):
             await asyncio.sleep(.1)
             plan=service.load(plan['plan_id'],t)
             if plan['state']!='placing':break
+    if t and plan['state']!='quoted':plan=await withdraw_created(t,plan)
+    return plan,revoked+flagged
+
+
+async def withdraw_by_words(t, plan, option_id):
+    """Fallback: a strong withdraw word arrived in place_orders.user_confirmation (the agent should have called withdraw_order first).
+
+    Works in every phase (see ConfirmationStore.withdraw): before the click or while the goods are
+    being re-checked the confirmation is revoked and nothing is created; once create-order may be
+    in flight the order is withdrawn as soon as it exists.
+    """
+    plan,count=await withdraw_now(t,plan)
     if plan['state']=='quoted':
         # Nothing exists yet: refuse the call. The plan stays quoted; a later explicit confirmation starts afresh.
-        raise ValueError('用户表示不下单或要先等一等，订单没有创建，之前的确认页已作废（作废 %d 个）。方案还保留着。请先在对话中明确确认下单：用户重新说“确认”后才会重新开始，在那之前不要再调用 place_orders。'%(revoked+flagged))
-    plan=await withdraw_created(t,plan)
+        raise ValueError('用户表示不下单或要先等一等，订单没有创建，之前的确认页已作废（作废 %d 个）。方案还保留着。请先在对话中明确确认下单：用户重新说“确认”后才会重新开始，在那之前不要再调用 place_orders。'%count)
     note=withdrawal_text(plan)
     data=dict(public(plan),withdrawn=True,next_tool=None)
     if plan['state'] in {'verifying'}:
@@ -529,14 +570,14 @@ async def withdraw_order(t, plan, option_id):
 
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户说取消/不要了/别下单/等等，同样逐字传入，服务端会中止或撤回。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
     """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t); claim={}
     from coupon_split import confirmation as cf
     selected=next(p for p in plan['plans'] if p['option_id']==option_id)
     # Decision order, see coupon_split/confirmation.py. 1: withdrawal beats everything else.
     if cf.is_negative(user_confirmation):
-        return await withdraw_order(t,plan,option_id)
+        return await withdraw_by_words(t,plan,option_id)
     if plan['state']=='quoted':
         # M03: a wrong credential or an expired quote is refused on the very first call, before any confirmation page exists.
         import hmac
@@ -618,11 +659,36 @@ async def wait_payment(plan_id: str, timeout: Annotated[int, Field(ge=0,le=60)] 
     return result(dict(public(plan),next_tool='wait_payment' if plan['state'] in {'awaiting_payment','verifying'} and not plan.get('dry_run') else '',pickup_codes=list(dict.fromkeys(codes))),text)
 
 
+async def withdraw_tool_result(plan_id, abandon):
+    t=token()
+    plan=service.load(plan_id,t)
+    if plan['state'] in {'cancelled','place_failed'} and not plan.get('orders'):
+        return result(dict(public(plan),withdrawn=True,next_tool=None),'这单本来就已经取消或没有下成，没有订单，没扣钱。')
+    plan,count=await withdraw_now(t,plan)
+    if plan['state']=='quoted':
+        if abandon:
+            plan=await service.cancel(t,plan_id)
+            note='好的，方案已放弃，订单没有创建，没扣钱。'
+        else:
+            note='好的，不下单。订单没有创建，之前的确认页已作废（作废 %d 个）。方案还保留着，想下单请用户重新说“确认下单”。'%count
+        return result(dict(public(plan),withdrawn=True,next_tool=None),note)
+    note=withdrawal_text(plan)
+    data=dict(public(plan),withdrawn=True,next_tool=None)
+    if plan['state']=='verifying':
+        data.update(next_tool='wait_payment',next_arguments={'plan_id':plan['plan_id'],'timeout':60})
+    return result(data,note+'\n\n'+markdown(plan))
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+async def withdraw_order(plan_id: str) -> CallToolResult:
+    """撤回这单。用户在任何时候表达不想要、取消、改天再说、不吃了、等一下、先别、我再想想等不想继续的意思，必须立刻调用，不用等特定词、不用先确认：确认页还没点就作废确认页，订单已建就撤回订单。把返回结果如实告诉用户；拿不准用户是不是想撤，先问“要撤回这单吗”。不要香菜、换大杯这类只是改餐品，不用撤回。"""
+    return await withdraw_tool_result(plan_id,False)
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
 async def cancel_plan(plan_id: str) -> CallToolResult:
-    """放弃方案或撤回待付订单；只取消当前账户自己的方案。"""
-    plan = await service.cancel(token(),plan_id)
-    return result(public(plan),markdown(plan))
+    """放弃方案或撤回订单（与 withdraw_order 相同，另外把还没下单的方案标记为放弃）。用户不想要、取消、改天、不吃了、等一下时立刻调用，并如实告知结果；只取消当前账户自己的方案。"""
+    return await withdraw_tool_result(plan_id,True)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
@@ -1514,6 +1580,18 @@ async def confirm_page(request):
                 confirmations.transition(key,'expired',('pending','approved'))
                 return JSONResponse({'error':'报价已过期，请回到对话重新报价','state':'expired'},status_code=409,headers=headers)
             return JSONResponse(await approve_and_place(record,plan),headers=headers)
+        if path.endswith('/withdraw'):
+            # The person pressed "撤回这单": no language judgement, the click is the instruction.
+            plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans WHERE id=?',(record['plan_id'],))),None)
+            t=token_for_owner(record['owner'])
+            if not plan:return JSONResponse({'error':'找不到这笔订单'},status_code=404,headers=headers)
+            if t is None and plan['state']!='quoted':
+                return JSONResponse({'error':'这个页面暂时没有账户连接，撤不了已建的订单。请回到对话说“撤回这单”，或在微信麦当劳小程序 → 我的订单里取消，不要付款。'},status_code=409,headers=headers)
+            await withdraw_now(t,plan,account=record['owner'])
+            record=confirmations.get(key)
+            body={'state':record['state']}
+            if record['state'] in {'used','failure_reported','creating'}:body.update(await confirmed_order_view(record))
+            return JSONResponse(body,headers=headers)
         record=confirmations.set_state(key,'declined')
         return JSONResponse({'state':record['state']},headers=headers)
     if path.endswith('/state'):
@@ -1531,16 +1609,23 @@ async def payment_page(request):
     plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans') if json.loads(body).get('payment_key')==key),None)
     headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
     if not plan:return JSONResponse({'error':'付款链接已失效，请回到对话查询订单。'},status_code=404,headers=headers)
-    if not request.url.path.endswith('/state'):
+    is_withdraw=request.url.path.endswith('/withdraw')
+    if not request.url.path.endswith('/state') and not is_withdraw:
         return FileResponse(ROOT/'web/payment.html',headers=headers)
     t=active_credentials.get(plan['owner']) or (UPSTREAM_TOKEN if UPSTREAM_TOKEN and owner(UPSTREAM_TOKEN)==plan['owner'] else None)
     if not t:return JSONResponse({'error':'账户连接已失效，请回到对话重新授权。'},status_code=401,headers=headers)
+    if is_withdraw:
+        origin=request.headers.get('origin','')
+        site=request.headers.get('sec-fetch-site','same-origin')
+        if origin!='http://'+request.headers.get('host','') or site not in {'same-origin','none'}:
+            return JSONResponse({'error':'只能在付款页上点击'},status_code=403,headers=headers)
+        await withdraw_now(t,plan)
     plan=await service.inspect_payment(t,plan['plan_id'])
     from coupon_split.payment import payment_state
     return JSONResponse(payment_state(plan,request.headers.get('user-agent','')),headers=headers)
 
 
-app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
+app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}/withdraw',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}/withdraw',payment_page,methods=['POST']),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
 
 if __name__ == "__main__":
     import uvicorn

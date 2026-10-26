@@ -2,10 +2,13 @@
 
 Decision order of place_orders (first match wins; each step is tested):
 
-1. Withdrawal first. If the user's latest words contain a word of the withdraw / pause list
-   (取消 撤回 撤单 不要 别下 别买 算了 先不 不下了 不吃了 退掉 退单 等等 等一下 再想想 改一下 换一下 no cancel stop) anywhere,
+0. The host agent judges "does the user want out" and calls withdraw_order / cancel_plan (or the user presses 撤回这单 on the
+   confirmation / payment page, no language involved). Everything below is the server-side safety net.
+1. Withdrawal first. If the user's latest words contain a STRONG word of the withdraw list
+   (取消 撤回 撤单 撤销 撤订 退单 退订 不要了 不要这单 别下单 不下了 不点了 不买了 算了 no cancel stop) anywhere,
    nothing else is looked at (a sentence with both such a word and "确认" is a withdrawal): not an earlier
-   approval, not a trusted host, not a click.
+   approval, not a trusted host, not a click. Weak words (不要 等等 稍等 改一下 换一下 先别 ...) are not in the list on
+   purpose: "不要香菜" or "等一下我看看菜单" is an edit, only the agent can tell, and it uses withdraw_order.
    a. plan still quoted    -> revoke every live confirmation of this plan, create nothing. This includes a
       click that is being processed (goods being re-checked): its record is revoked atomically, and the last
       gate right before create-order (ConfirmationStore.commit) then refuses.
@@ -40,11 +43,13 @@ import re
 import unicodedata
 from decimal import Decimal
 
-WITHDRAW_ZH = ('取消', '撤回', '撤单', '不要', '别下', '别买', '算了', '先不', '不下了', '不吃了', '退掉', '退单', '等等', '等一下', '再想想', '改一下', '换一下',
-               # supplement to the owner's list (QA 0.7.4 retraction samples that the list alone left unjudged)
-               '撤销', '反悔', '改主意', '停止', '停一下', '稍等', '别急', '先等', '先别',
-               # supplement to the owner's list (QA 0.7.5 samples: dialect "表下单了", "撤訂單" has no "撤单" substring)
-               '撤订', '退订', '表下单')
+# Fallback only, strong words only. The host agent judges "does the user want out" (weak talk such as 不要香菜 / 等一下我看看 /
+# 换一下饮料 must never withdraw anything on its own) and calls withdraw_order / cancel_plan; this list catches the sentence
+# when the agent forgot to. A weak word (不要 等等 稍等 改一下 换一下 先别 ...) is deliberately not here.
+WITHDRAW_ZH = ('取消', '撤回', '撤单', '撤销', '撤订', '退单', '退订', '不要了', '不要这单', '别下单', '不下了', '不点了', '不买了', '算了')
+# 算了 is a strong word, but "我算了一下" is arithmetic: those continuations are not a withdrawal, and its sound is not matched.
+NOT_WITHDRAW = ('算了一下', '算了下', '算了算', '算了笔', '算了账', '算了一笔', '算了几', '算了半天')
+NO_PINYIN = ('算了',)
 # Traditional -> simplified and toneless pinyin are looked up in the two generated tables below
 # (scripts/gen_language_tables.py; a test compares them with opencc / pypinyin). Neither library is needed at run time,
 # so the server and the Claude hook (which runs without any installed package) share this exact code.
@@ -134,9 +139,6 @@ _T2S_TO = (
     '龚龛龟𩨎𨱆䜤鿒'
 )
 _PINYIN = {
-    'biao': (
-        '㟽㠒㧼㯹㶾䁃䁭䅺䔸䙳䞄䮽俵儦墂婊幖彪摽杓标標檦淲滮瀌灬熛爂猋瘭磦穮脿膘臕蔈藨表裱褾諘謤贆錶鏢鑣镖镳颩颮颷飆飇飈飊飑飙飚驃驫骉骠髟鰾鳔'
-    ),
     'bie': (
         '㔡㢼㿜䇷䋢䌘䏟䘷䠥䭱䳤別别咇彆徶憋瘪癟莂虌蛂蟞襒蹩鱉鳖鼈龞'
     ),
@@ -146,45 +148,20 @@ _PINYIN = {
     'che': (
         '㒤㔭㤴㥉㨋㬚㳧㵔㾝㿭䁤䋲䒆䚢䛸䜠䞣䧪䰩伡俥偖勶唓坼屮彻徹扯掣撤撦澈烢爡瞮砗硨硩聅莗蛼車车迠頙'
     ),
-    'chi': (
-        '㒆㓼㔑㘜㙜㞴㞿㡿㢁㢋㢮㥡㮛㰞㱀㶴㷰㺈㽚䀸䇪䊼䑛䙙䜄䜉䜵䜻䞾䟷䠠䤲䧝䪧䮈䮻䰡䳵䶔䶵侈侙傺勅勑卶叱叺吃呎哧啻喫嗤噄坻垑墀妛媸尺岻弛彨彲彳恜恥慗憏懘抶持摛攡敕斥杘欼歭歯池湁漦灻炽烾熾'
-        '瓻痓痴痸瘈瘛癡眵瞝硳竾笞筂箎篪粚絺翄翅翤翨耻肔胣胵腟茌荎蚇蚩蚳螭袲袳裭褫訵誺謘貾赤赿趍趩跮踟迟遅遟遫遲鉓鉹銐雴飭饎饬馳驰魑鴟鵄鶒鷘鸱麶黐齒齝齿'
-    ),
     'dan': (
         '㐤㕪㗖㠆㡺㲷㴷䃫䄡䉞䐷䒟䨢䨵䩥䭛丹亶伔但僤儋刐勯匰单単啖啗啿單嘾噉嚪妉媅帎弹弾彈惮憚憺抌担掸撢撣擔旦柦殚殫氮沊泹淡澸澹狚玬瓭甔疍疸瘅癉癚眈砃禫窞箪簞紞繵耼耽聃聸胆腅膽萏蓞蛋蜑衴'
         '褝襌觛誕诞贉赕躭郸鄲霮頕饏馾駳髧鴠黕黮鿕'
     ),
-    'deng': (
-        '㔁㲪䒭䔲䙞䠬䮴䳾凳噔墱嬁嶝戥朩櫈灯燈璒登瞪磴竳等簦艠覴豋蹬邓鄧鐙镫隥'
-    ),
-    'diao': (
-        '㒛㓮㚋㢯㪕㹦䂏䂽䄪䉆䔙䘟䳂伄凋刁刟叼吊奝屌弔弴彫扚掉殦汈琱瘹瞗碉窎窵竨簓蓧藋虭蛁訋調调貂釣鈟銱鋽鑃钓铞铫雕雿魡鮉鯛鲷鳭鵰鼦'
+    'dian': (
+        '㓠㝪㞟㶘㸃㼭䍄䓦佃傎典厧嚸坫垫墊壂奌奠婝婰嵮巅巓巔店惦扂掂攧敁敟椣槇槙橂橝殿淀滇澱点猠玷琔电甸瘨癜癫癲碘簟蒧蕇蜔跕踮蹎钿阽電靛顚顛颠驔點齻'
     ),
     'ding': (
         '㝎㣔㫀㴿䦺丁仃叮啶奵定嵿帄忊椗濎玎疔盯矴碇碠磸耵聢腚萣薡虰蝊訂订酊釘鋌錠鐤钉铤锭靪頂顁顶飣饤鼎鼑'
-    ),
-    'fan': (
-        '㕨㛯㠶㤆㴀㶗㸋㺕㼝㽹䀀䀟䉊䉒䊩䋣䋦䌓䐪䒦䕰䛀䡊䣲䪛䪤䫶䭵䮳仮凡凢凣勫匥反噃墦奿婏嬎嬏帆幡忛憣払旙旛杋柉梵棥樊橎氾汎泛渢滼瀪瀿烦煩燔犯璠畈番盕矾礬笲笵範籓籵緐繁繙羳翻膰舤舧范蕃薠'
-        '藩蘩蠜襎訉販贩蹯軓軬轓返釩鐇鐢钒颿飜飯飰饭鱕鷭'
-    ),
-    'gai': (
-        '㕢㧉㮣㱾䀭䏗䐩䪱䬵丐乢侅匃匄垓姟峐忋戤摡改晐杚概槩槪溉漑瓂畡盖祴絠絯荄葢蓋該该豥賅賌赅郂鈣钙阣陔隑'
-    ),
-    'huan': (
-        '㕕㡲㣪㪱㬇㬊㵹㶎㹕㹖㼫㿪䀓䆠䈠䍺䒛䝠䠉䥧䦡䭴䯘䴉䴋䴟唤喚喛嚾圜奂奐嬛宦寏寰峘嵈幻患愌懽换換擐攌桓梙槵欢歓歡洹浣涣渙漶澣澴烉焕煥犿狟獾环瑍環瓛痪瘓睆糫絙綄緩繯缓缳羦肒荁萈萑藧讙豢'
-        '豲貆貛轘逭郇酄鉮鍰鐶锾镮闤阛雈驩鬟鯇鯶鰀鲩鴅鵍鹮'
     ),
     'hui': (
         '㑰㑹㜇㞀㞧㤬㥣㧑㨤㨹㩓㩨㫎㬩㱱㷄㷇㷐㹆㻅㾯䂕䃣䅏䌇䏨䕇䖶䛛䛼䜋䜐䝅䤧䧥䩈䫭䵻会佪僡儶匯卉咴哕喙嘒噅噕嚖囘回囬圚婎媈嬒孈寭屶屷幑廻廽彗彙彚徻徽恚恛恢恵悔惠慧憓懳拻挥揮撝晖晦暉暳會'
         '楎槥橞檅檓櫘殨毀毁毇汇泋洃洄浍湏滙潓澮濊瀈灰灳烠烣烩煇燬燴獩珲璤璯痐瘣睳瞺禈秽穢篲絵繢繪绘缋翙翚翬翽芔茴荟蔧蕙薈薉藱蘳虺蚘蛔蛕蜖蟪袆褘詯詼誨諱譓譭譿讳诙诲豗賄贿輝辉迴逥鏸鐬闠阓'
         '隓隳靧頮顪颒餯鮰鰴麾'
-    ),
-    'ji': (
-        '㑧㒫㔕㗊㗱㘍㙨㙫㚡㚻㛷㞃㞆㞛㞦㠍㠎㠱㡭㡮㤂㥍㥛㦘㦸㧀㨈㫷㭲㮨㮷㰟㲅㲺㳵㴉㴕㸄㹄㻑㻷㽺㾊㾵䀈䁒䁶䂑䇫䋟䍤䐀䐕䐚䓽䕤䗁䗗䚐䛋䛴䜞䝸䞘䟇䟌䠏䢋䢳䣢䤒䦇䨖䩯䮺䰏䲯䳭䶓䶩丌丮乩亟亼亽伋伎'
-        '佶偈偮僟兾冀几击刉刏剂剞剤劑勣卙即卽及叝叽吉咭哜唧喞嗘嘰嚌圾坖垍基塈塉墼妀妓姞姫姬嫉季寂寄屐岌峜嵆嵇嵴嶯己幾庴廭彐彑彶徛忌忣急悸惎愱懻戟戢技挤掎揤撃撠擊擠敧旡既旣暨暩曁朞机极枅'
-        '梞棘楫極槉槣樭機橶檕檝檵櫅殛毄汲泲洎济済湒漃漈潗激濈濟瀱焏犄犱狤玑璣畸畿疾痵瘠癠癪皀皍矶磯祭禝禨积稘稩稷稽穄穊積穖穧笄笈筓箕箿簊籍紀紒級継緝績繋繼级纪继绩缉罽羁羇羈耤耭肌脊膌臮'
-        '艥芨芰茍茤荠葪蒺蓟蔇蕀蕺薊薺藉蘎蘮蘻虀虮螏蟣裚襀襋覉覊覬觊觙觭計記誋諅譏譤计讥记诘谻賫賷赍趌跡跻跽踖蹐蹟躋躤躸輯轚辑迹郆鄿銈銡錤鍓鏶鐖鑇鑙际際隮集雞雦雧霁霵霽鞿韲飢饑饥驥骥髻鬾'
-        '魕魢鯚鰶鰿鱀鱭鱾鲚鲫鳮鵋鶏鶺鷄鷑鸄鸡鹡麂齌齎齏齑'
     ),
     'le': (
         '㔹㖀㦡乐了仂叻忇扐楽樂氻泐玏砳竻簕肋艻阞韷餎饹鰳鳓'
@@ -196,29 +173,11 @@ _PINYIN = {
         '㖆㘗㜹㠊㣄㧁㫢㭕㯫㰦㲘㸖㻃䁦䂂䆽䈌䋧䒧䒼䓚䓛䖦䝣䞤䟊䠐䢗䧢䵶䶚伹佉佢刞劬匤区區厺去取呿唟坥娶屈岖岨岴嶇忂憈戵抾敺斪曲朐欋氍浀淭渠灈璖璩癯瞿磲祛竘竬筁籧粬紶絇翑耝胊胠臞菃葋蕖蘧蛆'
         '蛐蝺螶蟝蠷蠼衐衢袪覰覷覻觑詓詘誳诎趋趣趨躣躯軀軥迲鑺镼閴闃阒阹駆駈驅驱髷魼鰸鱋鴝鸜鸲麮麯麴麹黢鼁鼩齲龋'
     ),
-    'shao': (
-        '㪢㲈㸛䈰䈾䏴䒚䔠䙼䬰劭勺卲哨娋少弰捎旓柖梢潲烧焼燒玿睄稍筲紹綤绍艄芍苕莦蕱蛸袑輎邵韶颵髾鮹'
-    ),
-    'suan': (
-        '䝜匴狻痠祘笇筭算蒜酸'
-    ),
-    'ting': (
-        '㓅㹶㼗䅍䋼䗴䦐䯕䱓䵺亭侹停厅厛听圢娗婷嵉庁庭廰廳廷挺桯梃楟榳汀涏渟烃烴烶珽町甼筳綎耓聤聴聼聽脡艇艼莛葶蜓蝏誔諪邒閮霆鞓頲颋鼮'
-    ),
     'tui': (
         '㞂㞜㢈㢑㥆㱣㷟㾼㿉㿗䀃䅪侻俀僓娧尵弚推煺穨腿蓷藬蘈蛻蜕褪蹆蹪退隤頹頺頽颓駾骽魋'
     ),
     'xia': (
         '㔠㗇㘡㙈㙤㰨㰰㰺㽠䖎䖖䘥䛅䠍䪗䫗丅下乤侠俠傄匣吓嚇圷夏夓峡峽懗敮暇柙梺炠烚煆狎狭狹珨瑕疜疨睱瞎硖硤碬磍祫筪縀縖罅翈舝舺蕸虲虾蝦谺赮轄辖遐鍜鎋鎼鏬閕閜陜陿霞颬騢魻鰕鶷黠'
-    ),
-    'xian': (
-        '㔾㘅㘋㛾㡉㡾㢺㦑㦓㧥㪇㫫㬎㬗㭠㭹㮭㯗㰊㰹㲔㳄㳭㵪㶍㷿㸝㺌㺤㽉㾾㿅㿌䁂䂅䃱䃸䄳䆎䉯䉳䊱䏹䐄䕔䗾䘆䙹䚚䜢䝨䢾䤼䥪䦘䦥䧋䧟䧮䨘䨷䩂䯭䯹䱤䲗䵇䵌䶟仙仚伭佡僊僩僲僴先冼县咞咸哯唌啣嘕垷壏'
-        '奾妶姭娊娨娴娹婱嫌嫺嫻嬐宪尟尠屳岘峴崄嶮幰廯弦忺憪憲憸挦掀搟撊撏攇攕显晛暹杴枮橌櫶毨氙涀涎湺澖瀗灦烍燹狝猃献獫獮獻玁现珗現甉痫癇癎県睍瞯硍礥祆禒秈稴筅箲籼粯糮絃絤綫線縣繊纎纖纤'
-        '线缐羡羨胘腺臔臽舷苋苮莧莶薟藓藖蘚蚬蚿蛝蜆衔衘褼襳誢誸諴譣豏賢贒贤赻跣跹蹮躚輱酰醎銑銛銜鋧錎鍁鍌鑦铦锨閑閒闲限陥险陷険險霰韅韯韱顕顯餡馅馦鮮鱻鲜鶱鷳鷴鷼鹇鹹麙麲鼸'
-    ),
-    'xiang': (
-        '㐮㗽㟄㟟䊑䐟䔗䖮䜶䢽䦳䬕䴂乡享亯佭像勨厢向响啌嚮塂姠嶑巷庠廂忀想晑曏栙楿橡欀湘珦瓖瓨相祥稥箱絴緗缃缿翔膷芗萫葙薌蚃蟓蠁衖襄襐詳详象跭郷鄉鄊鄕銄銗鐌鑲镶響項项飨餉饗饟饷香驤骧鮝鯗'
-        '鱌鱜鱶鲞麘'
     ),
     'xiao': (
         '㔅㕺㗛㚠㚣㤊㩋㪣㬵㮁㲖㵿㹲㺒䉰䊥䌃䎄䒕䒝䕧䟁䥵䨭䬘䴛侾俲傚効呺咲哓哮啸嘋嘐嘨嘯嘵嚣嚻囂婋孝宯宵小崤庨彇恷憢揱效敩斅斆晓暁曉枭枵校梟櫹歊歗殽毊洨消涍淆潇瀟灱灲焇熽猇獢痚痟皛皢硝硣'
@@ -228,58 +187,24 @@ _PINYIN = {
         '㑸㑾㔽㙘㝔㞁㟱㢓㨱㫏㫐㴭㵸㹓㿑㿢䁏䁘䂚䆗䆙䆞䋂䌁䌊䌛䔄䖴䙅䚺䚻䛂䠛䢣䬙䯚䳩䴠䶧䶸仸倄偠傜吆咬喓嗂垚堯夭妖姚婹媱宎尧尭岆峣崾嶢嶤幺徭愮抭揺搖摇摿暚曜杳枖柼楆榚榣殀溔滧烑熎燿爻狕猺'
         '獟珧瑤瑶眑矅磘祅穾窅窈窑窔窯窰筄繇纅耀肴腰舀艞苭药葯葽蓔薬藥蘨袎要覞訞詏謠謡讑谣軺轺遙遥邀邎銚鎐鑰钥闄靿顤颻飖餆餚騕鰩鳐鴁鴢鷂鷕鹞鼼齩'
     ),
-    'yi': (
-        '㐌㐹㑊㑜㑥㓷㔴㕈㖂㘁㘈㙠㙪㙯㚤㚦㛄㛕㛳㜋㜒㝖㝣㞔㠖㠯㡫㡼㢞㣇㣻㥋㥴㦉㦤㦾㫊㰘㰝㰻㱅㱞㱲㲼㳑㳖㴁㴒㴔㵝㵩㶠㹫㹭㺿㼢㽈㾨䃜䄁䄩䄬䄿䆿䇩䇵䇼䉗䉝䉨䋚䋵䌻䎈䒾䓃䓈䓹䔟䔬䔱䕍䖁䖊䖌䗑䗟䗷'
-        '䘝䘸䚷䝘䝝䝯䞅䢃䣡䣧䦴䧅䧇䧧䩟䪰䫑䬁䬥䬮䭂䭞䭲䭿䮊䯆䰙䰯䱌䲑䴊䴬䵝一乁乂义乊乙亄亦亿以仪伇伊伿佁佚佾侇依俋倚偯儀億兿冝刈劓劮勚勩匇匜医吚呓呭呹咦咿唈噫囈圛圯坄垼埶埸墿壱壹夁夷奕'
-        '姨媐嫕嫛嬄嬑嬟宐宜宧寱寲屹峄峓崺嶧嶬嶷已巸帟帠幆庡廙异弈弋弌弬彛彜彝彞役忆怈怡怿恞悒悘悥意憶懌懿扅扆抑拸挹掜揖撎攺敡敼斁旑旖易晹暆曀曎杙枍枻柂栘栧栺桋棭椅椬椸榏槸檍檥檹欥欭欹歝'
-        '殔殪殹毅毉沂沶泆洢浂浥浳渏湙溢漪潩澺瀷炈焲熠熤熪熼燚燡燱狋猗獈玴珆瑿瓵畩異疑疫痍痬瘗瘞瘱癔益眙睪瞖矣硛礒祎禕秇移稦穓竩笖箷簃籎縊繄繶繹绎缢羛羠義羿翊翌翳翼耛耴肄肊胰膉臆舣艗艤艺'
-        '芅苅苡苢萓萟蓺薏藙藝蘙虉蚁蛜蛡蛦蜴螔螘螠蟻衣衤衪衵袘袣裔裛裿褹襼觺訑訲訳詍詑詒詣誃誼謻譩譯議讉讛议译诒诣谊豙豛豷貖貤貽賹贀贻跇跠踦軼輢轙轶辷迆迤迻逘逸遗遺邑郼酏醫醳醷釔釴鈘鈠鉯'
-        '銥鎰鏔鐿钇铱镒镱陭隿霬靾頉頤頥顊顗颐飴饐饴駅驛驿骮鮨鯣鳦鶂鶃鶍鷁鷊鷖鷧鷾鸃鹝鹢鹥黓黟黳齮齸'
-    ),
-    'zai': (
-        '㱰䏁䣬䮨䵧仔傤儎再哉在宰崽扗栽洅渽溨災灾烖甾睵縡菑賳載载酨'
-    ),
-    'zhi': (
-        '㕄㗌㗧㘉㙷㛿㜱㜼㝂㡳㡶㣥㥀㨁㨖㩼㫑㮹㯄㲍㲛㴛㴯㸟㽻㿃䄺䅩䆈䇛䇧䉅䉜䎺䏯䐈䐭䑇䓋䓌䓜䓡䕌䘭䚦䚳䛗䝰䝷䞃䞠䟈䟡䡹䣽䤠䥍䦯䧴䩢䬹䭁䱃䱥䲀䳅䵂䵹之乿侄俧倁値值偫傂儨凪制劕劧卮厔只吱咫嗭'
-        '址坁坧垁埴執墆墌夂妷姪娡嬂寘峙崻巵帋帙帜幟庢庤廌彘徏徔徝志忮怾恉慹憄懥懫戠执扺扻抧挃指挚掷搘搱摭摯擲擳支旘旨晊智枝枳柣栀栉桎梔梽植椥楖榰樴櫍櫛止殖汁汥汦沚治泜洔洷淔淽滍滞滯漐潌'
-        '瀄炙熫犆狾猘瓆瓡畤疐疷疻痔痣直知砋礩祉祑祗祬禃禔秓秖秩秪秲秷稙稚稺穉窒筫紙紩絷綕緻縶織纸织置翐聀职職肢胑胝脂膣膱至致臸芖芝芷茋藢蘵蛭蜘螲蟙衹衼袟袠製襧覟觗觯觶訨誌豑豒豸貭質贄质'
-        '贽趾跖跱踬踯蹠躑躓軄軹軽輊轵轾迣郅酯釞鉄銍鋕鑕铚锧阤阯陟隲隻雉馶馽駤騭騺驇骘鯯鳷鴙鴲鷙鸷黹鼅鿵'
-    ),
-    'zhu': (
-        '㑏㔉㝉㤖㦵㧣㫂㵭㶆㹥㺛㾻㿾䃴䇠䇡䇬䌵䍆䎷䐗䐢䕽䘄䘚䘢䝒䝬䟉䠱䡤䣷䥮䪒䬡䭖䮱䰞丶主伫佇住侏劚助劯嘱囑坾墸壴孎宔嵀拄斸曯朱杼柱株槠樦橥櫧櫫欘殶泏注洙渚潴濐瀦灟炢炷烛煑煮燭爥猪珠疰瘃'
-        '眝瞩矚砫硃祝祩秼窋竚竹竺笁笜筑筯箸築篫簗紵紸絑纻罜羜翥舳苎茱茿莇著蛀蛛蝫蠋蠩蠾袾註詝誅諸诛诸豬貯贮跓跦躅軴迬逐邾鉒銖鋳鑄钃铢铸陼霔馵駐駯驻鮢鯺鱁鴸麆麈鼄'
+    'zhe': (
+        '㞏㡇㢎㪿㭙㭯㯙㯰㸙㸞䂞䇽䊞䎲䏳䐑䐲䓆䗪䜆䝃䝕䠦䩾䮰䵭乽厇哲啠啫喆嗻嚞埑嫬悊折摺晢晣柘樜歽浙淛潪着矺砓磔禇籷粍者蔗虴蛰蜇蟄蟅袩褶襵詟謫謺讁讋谪赭輒輙轍辄辙这這遮銸鍺锗馲鮿鷓鹧'
     ),
 }
 _WORD_PINYIN = {
     '取消': ('qu', 'xiao'),
     '撤回': ('che', 'hui'),
     '撤单': ('che', 'dan'),
-    '不要': ('bu', 'yao'),
-    '别下': ('bie', 'xia'),
-    '别买': ('bie', 'mai'),
-    '算了': ('suan', 'le'),
-    '先不': ('xian', 'bu'),
-    '不下了': ('bu', 'xia', 'le'),
-    '不吃了': ('bu', 'chi', 'le'),
-    '退掉': ('tui', 'diao'),
-    '退单': ('tui', 'dan'),
-    '等等': ('deng', 'deng'),
-    '等一下': ('deng', 'yi', 'xia'),
-    '再想想': ('zai', 'xiang', 'xiang'),
-    '改一下': ('gai', 'yi', 'xia'),
-    '换一下': ('huan', 'yi', 'xia'),
     '撤销': ('che', 'xiao'),
-    '反悔': ('fan', 'hui'),
-    '改主意': ('gai', 'zhu', 'yi'),
-    '停止': ('ting', 'zhi'),
-    '停一下': ('ting', 'yi', 'xia'),
-    '稍等': ('shao', 'deng'),
-    '别急': ('bie', 'ji'),
-    '先等': ('xian', 'deng'),
-    '先别': ('xian', 'bie'),
     '撤订': ('che', 'ding'),
+    '退单': ('tui', 'dan'),
     '退订': ('tui', 'ding'),
-    '表下单': ('biao', 'xia', 'dan'),
+    '不要了': ('bu', 'yao', 'le'),
+    '不要这单': ('bu', 'yao', 'zhe', 'dan'),
+    '别下单': ('bie', 'xia', 'dan'),
+    '不下了': ('bu', 'xia', 'le'),
+    '不点了': ('bu', 'dian', 'le'),
+    '不买了': ('bu', 'mai', 'le'),
 }
 # --- tables:end
 _T2S = str.maketrans(_T2S_FROM, _T2S_TO)
@@ -330,7 +255,10 @@ def classify(text):
     simple = to_simplified(plain)
     # Withdrawal looks at the characters as typed, at the simplified form (traditional text) and at the sound (typos).
     # The confirmation match below stays on the text as typed, so the whitelist itself is unchanged.
-    if any(w in plain or w in simple for w in WITHDRAW_ZH) or WITHDRAW_EN.search(raw) or pinyin_hit(simple):
+    cleaned = simple
+    for phrase in NOT_WITHDRAW:
+        cleaned = cleaned.replace(phrase, '')
+    if any(w in cleaned for w in WITHDRAW_ZH) or WITHDRAW_EN.search(raw) or pinyin_hit(cleaned):
         return 'withdraw', None
     if re.search('[?？]', raw):  # a question is never a confirmation
         return 'none', None
@@ -359,7 +287,7 @@ def confirm_rule_text():
 
 def withdraw_rule_text():
     """The withdraw / pause word list as shown to agents (generated from WITHDRAW_ZH)."""
-    return '、'.join(WITHDRAW_ZH) + '、no、cancel、stop（繁体写法和同音错别字同样算，例如“取銷”“撤会”）'
+    return '、'.join(WITHDRAW_ZH) + '、no、cancel、stop（繁体写法和同音错别字同样算，例如“取銷”“撤会”）这些明确的词'
 
 
 def is_question(text):

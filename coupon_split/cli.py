@@ -30,12 +30,12 @@ def configure_codex(plugin=True):
     prefix='plugins."mcd-best-order@mcd-best-order-marketplace".mcp_servers.coupon-split' if plugin else 'mcp_servers.coupon-split'
     policies={prefix:('default_tools_approval_mode','auto'),prefix+'.tools.quote_best':('approval_mode','approve')}
     policies[prefix+'.tools.propose_cart']=('approval_mode','approve')
-    for tool in ('wait_payment','pay_card'):policies[prefix+'.tools.'+tool]=('approval_mode','approve')
+    for tool in ('wait_payment','pay_card','withdraw_order'):policies[prefix+'.tools.'+tool]=('approval_mode','approve')
     for tool in ('place_orders','cancel_plan'):
         policies[prefix+'.tools.'+tool]=('approval_mode','prompt')
     config=tomllib.loads(original)
     existing=(config.get('plugins',{}).get('mcd-best-order@mcd-best-order-marketplace',{}) if plugin else config).get('mcp_servers',{}).get('coupon-split',{})
-    if existing.get('default_tools_approval_mode')=='auto' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='approve' for tool in ('quote_best','propose_cart','wait_payment','pay_card')) and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan')):
+    if existing.get('default_tools_approval_mode')=='auto' and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='approve' for tool in ('quote_best','propose_cart','wait_payment','pay_card','withdraw_order')) and all(existing.get('tools',{}).get(tool,{}).get('approval_mode')=='prompt' for tool in ('place_orders','cancel_plan')):
         if original!=before:path.write_text(original,encoding='utf-8')
         print('本插件报价与写操作审批策略已配置。')
         return

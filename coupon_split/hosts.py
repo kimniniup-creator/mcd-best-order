@@ -15,7 +15,7 @@ import tomllib
 import uuid
 
 NAME = 'coupon-split'
-SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.6/coupon_split-0.7.6-py3-none-any.whl'
+SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.7/coupon_split-0.7.7-py3-none-any.whl'
 SOURCES = {
     # Paths and formats checked against each vendor's documentation.
     'dsh':'https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md',
@@ -236,7 +236,7 @@ def render(host, original, entry, uninstall=False):
             if host=='codex-plugin':
                 text+='\n['+prefix+']\ndefault_tools_approval_mode = "auto"\n'
             else:text+='\n'+codex_block(entry)
-            for tool in ('quote_best','propose_cart','wait_payment','pay_card','place_orders','cancel_plan'):
+            for tool in ('quote_best','propose_cart','wait_payment','pay_card','withdraw_order','place_orders','cancel_plan'):
                 mode='prompt' if tool in ('place_orders','cancel_plan') else 'approve'
                 text+='\n['+prefix+'.tools.'+tool+']\napproval_mode = '+json.dumps(mode)+'\n'
         tomllib.loads(text)

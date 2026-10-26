@@ -7,6 +7,7 @@
 .confirm .sim{background:#E6ECF7;color:#2E4673;border-radius:12px;padding:12px;margin:12px 0}
 .confirm .row{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
 .confirm button{min-height:48px;border-radius:12px;border:1px solid #1A1813;padding:12px 20px;font:inherit;cursor:pointer;background:transparent;color:#1A1813}
+.confirm button.withdraw{border-color:#8A2F0F;color:#8A2F0F;font-weight:650}
 .confirm button.go{background:var(--act);border-color:var(--act);color:#fff;font-weight:650}
 .confirm button:disabled{opacity:.55;cursor:default}
 .confirm .done{font-weight:650}
