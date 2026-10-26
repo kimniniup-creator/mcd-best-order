@@ -1,4 +1,4 @@
-# 任意 MCP Agent 安装与自检（0.7.1）
+# 任意 MCP Agent 安装与自检（0.7.2）
 
 模型名不等于宿主名：DeepSeek 可以运行在 DSH、Cursor 等不同应用中。先看当前应用、命令或配置界面，再选 host。无需斜杠命令、Skill 或钩子；MCP instructions、工具描述和文本结果自带流程，MCP prompts 的 `order_mcdonalds` 是可选入口。
 
@@ -7,7 +7,7 @@
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl coupon-split
 ```
 
 ```sh
@@ -40,7 +40,7 @@ coupon-split setup --host generic
 | claude-desktop | Windows `%APPDATA%/Claude/claude_desktop_config.json`；macOS `~/Library/Application Support/Claude/claude_desktop_config.json`，`mcpServers` | MCP instructions/prompt 已足够；不强装 Claude Code Skill | [本地 MCP](https://modelcontextprotocol.io/docs/develop/connect-local-servers) |
 | claude-code | 保留 README 插件市场两步安装（含 Skill 和钩子）；setup 还提供项目 `.mcp.json` 直连，不要同时启用两份同名服务 | 插件 `skills/mcd-order/SKILL.md` | [插件](https://code.claude.com/docs/en/plugins)、[项目 MCP](https://code.claude.com/docs/en/mcp) |
 | codex-plugin | 先按 README 安装插件；setup 只配置 `CODEX_HOME/config.toml` 的本插件审批，写工具仍 prompt | 插件自带 Skill | [插件](https://developers.openai.com/codex/plugins) |
-| codex-ide | `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），`mcp_servers`；CLI/IDE 共用 | 无需 Skill；可选当前宿主支持的用户 skills 目录 | [MCP](https://developers.openai.com/codex/mcp) |
+| codex-ide | `CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），`mcp_servers`；CLI/IDE 共用 | setup 同时把 Skill 写到 `CODEX_HOME/skills/mcd-order/SKILL.md`（已验证：没有它时，Codex 可能对一句笼统的“我要吃麦当劳”先自己提问、不调用点餐工具）；已有不同的同名文件会先备份，卸载只移除未被改动的那份 | [MCP](https://developers.openai.com/codex/mcp) |
 | generic | 只输出标准 stdio `command/args/env`；根据宿主官方文档合并 | 可粘贴本页“点餐约定”到宿主规则区 | [MCP 传输](https://modelcontextprotocol.io/specification/latest/basic/transports) |
 
 支持别名 `deepseek-harness`、`vscode-copilot`、`roo-code`。可选说明文字不由安装器自动覆盖；既有用户规则应先读再合并。项目 MCP 配置可能需要用户信任工作区并重启服务。

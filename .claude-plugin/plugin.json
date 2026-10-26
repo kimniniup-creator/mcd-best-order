@@ -1,6 +1,6 @@
 {
   "name": "mcd-best-order",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "麦当劳点餐与同规格优惠核价",
   "author": {
     "name": "coupon-split"

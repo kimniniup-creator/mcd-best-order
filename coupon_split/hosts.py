@@ -15,7 +15,7 @@ import tomllib
 import uuid
 
 NAME = 'coupon-split'
-SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl'
+SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.2/coupon_split-0.7.2-py3-none-any.whl'
 SOURCES = {
     # Paths and formats checked against each vendor's documentation.
     'dsh':'https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md',
@@ -276,7 +276,48 @@ def detect(project=None,home=None):
     return out
 
 
-def setup(host,apply=False,uninstall=False,project=None,home=None,config=None,entry=None):
+def codex_skill_path(home=None,config=None):
+    """User skill directory of Codex ($CODEX_HOME/skills). Verified: a bare 我要吃麦当劳 reliably finds the tools only with it."""
+    if config:return Path(config).parent/'skills'/'mcd-order'/'SKILL.md'
+    home=Path(home or Path.home())
+    root=Path(os.environ['CODEX_HOME']) if not home_explicit(home) and os.environ.get('CODEX_HOME') else home/'.codex'
+    return root/'skills'/'mcd-order'/'SKILL.md'
+
+
+def sync_skill(path,apply,uninstall):
+    """Install/remove our own Skill file only; never overwrite a different file without a backup."""
+    source=skill_source().read_text(encoding='utf-8')
+    exists=path.exists()
+    current=path.read_text(encoding='utf-8') if exists else None
+    if uninstall:
+        if not exists or current!=source:
+            print('Skill：'+('已不存在。' if not exists else '内容已被你改过，保留不动：'+str(path)));return
+        print('移除 Skill：'+str(path))
+        if apply:
+            path.unlink()
+            for folder in (path.parent,path.parent.parent):
+                try:folder.rmdir()
+                except OSError:pass
+        return
+    if current==source:print('Skill 已是最新：'+str(path));return
+    print(('更新' if exists else '写入')+' Skill：'+str(path))
+    if not apply:return
+    path.parent.mkdir(parents=True,exist_ok=True)
+    if exists:
+        backup=path.with_name(path.name+'.coupon-split-'+uuid.uuid4().hex+'.bak')
+        backup.write_bytes(path.read_bytes());print('已备份：'+str(backup))
+    path.write_text(source,encoding='utf-8',newline='\n')
+
+
+def setup(host,apply=False,uninstall=False,project=None,home=None,config=None,entry=None,skill=True):
+    result=_setup_config(host,apply,uninstall,project,home,config,entry)
+    if host=='codex-ide' and skill:
+        # Codex needs the Skill to pick up a vague first sentence (the tools can be discovered late).
+        sync_skill(codex_skill_path(home,config),apply,uninstall)
+    return result
+
+
+def _setup_config(host,apply=False,uninstall=False,project=None,home=None,config=None,entry=None):
     entry=copy.deepcopy(entry or stdio_entry())
     if host=='generic':
         print(json.dumps({'mcpServers':{NAME:entry}},ensure_ascii=False,indent=2))
