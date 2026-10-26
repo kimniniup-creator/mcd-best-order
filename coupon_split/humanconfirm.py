@@ -169,30 +169,33 @@ def requires_human(real, simulation_gate=False):
 
 
 def normalise_amount(value):
-    """'¥10.00' / '10' / '10元' -> Decimal('10.00'); anything else -> None."""
-    from decimal import Decimal, InvalidOperation
-    text = str(value if value is not None else '').strip().replace('¥', '').replace('￥', '').replace('元', '').replace(',', '').strip()
-    import re
-    if not re.fullmatch(r'[0-9]{1,9}(\.[0-9]{1,2})?', text):
-        return None
+    """Strict amount text -> Decimal('10.00'), or None. Same grammar as the spoken confirmation (confirmation.parse_amount_cents)."""
+    from decimal import Decimal
+    from coupon_split.confirmation import parse_amount_cents
+    cents = parse_amount_cents(value)
+    return None if cents is None else Decimal(cents) / 100
+
+
+def elicitation_result(answer, summary):
+    """'ok' | 'bad_amount' | 'no'. ok only for an explicit accept, confirm ticked, and an amount that is strictly
+    well-formed and equals this quote to the cent. bad_amount: accepted and ticked but the text is not an amount."""
     try:
-        return Decimal(text).quantize(Decimal('0.01'))
-    except (InvalidOperation, ValueError):
-        return None
+        if answer is None or getattr(answer, 'action', None) != 'accept':
+            return 'no'
+        data = answer.data
+        if getattr(data, 'confirm', None) is not True:
+            return 'no'
+        typed = normalise_amount(getattr(data, 'amount_yuan', None))
+        if typed is None:
+            return 'bad_amount' if str(getattr(data, 'amount_yuan', '') or '').strip() else 'no'
+        return 'ok' if typed == normalise_amount(summary['price_yuan']) else 'no'
+    except Exception:
+        return 'no'
 
 
 def elicitation_accepted(answer, summary):
     """True only for an explicit accept whose filled-in amount equals this quote. decline / cancel / anything else is False."""
-    try:
-        if answer is None or getattr(answer, 'action', None) != 'accept':
-            return False
-        data = answer.data
-        if getattr(data, 'confirm', None) is not True:
-            return False
-        typed = normalise_amount(getattr(data, 'amount_yuan', None))
-        return typed is not None and typed == normalise_amount(summary['price_yuan'])
-    except Exception:
-        return False
+    return elicitation_result(answer, summary) == 'ok'
 
 
 def supports_elicitation(ctx):

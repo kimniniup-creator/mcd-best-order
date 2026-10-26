@@ -321,6 +321,24 @@ CONFIRM_CORES = ('确认下单', '确认', '同意下单', '就这样下单')
 CONFIRM_SUFFIXES = ('谢谢你', '谢谢', '多谢', '谢了', '麻烦了', '辛苦了', '吧')
 CONFIRM_FULL = re.compile(
     '(?:' + '|'.join(CONFIRM_PREFIXES) + ')*(?:' + '|'.join(CONFIRM_CORES) + r')(?:¥?(\d+(?:\.\d{1,2})?)(?:元|块)?)?(?:' + '|'.join(CONFIRM_SUFFIXES) + ')*')
+# One strict amount grammar for every place a person's amount is read (the whitelist sentence and the elicitation form):
+# NFKC + strip, then the WHOLE text must be: [one currency ¥ / RMB / CNY] [spaces] integer [. 1-2 decimals] [spaces] [one unit 元 / 块].
+# No thousands separator, no sign, no exponent, no second symbol, no letters other than the symbols above. Compared in cents, exactly.
+AMOUNT_FULL = re.compile(r'(?:(?:¥|rmb|cny)[ 	]*)?(0|[1-9][0-9]{0,8})(?:\.([0-9]{1,2}))?(?:[ 	]*(?:元|块))?')
+AMOUNT_HINT = '金额格式不对，请在确认页点确认下单'
+# After the confirmation word: the run of characters that can only belong to an amount (digits, symbols, separators, signs, units).
+_AMOUNT_RUN = re.compile(r'[\s:;、]*,?[\s:;、]*((?:[0-9¥.,+\-−e\s元块]|rmb|cny)+)')
+_CORE_SEARCH = re.compile('|'.join(CONFIRM_CORES))
+
+
+def parse_amount_cents(value):
+    """Strict amount -> integer cents, or None when the text is not exactly an amount (see AMOUNT_FULL)."""
+    if not isinstance(value, str):
+        return None
+    match = AMOUNT_FULL.fullmatch(unicodedata.normalize('NFKC', value).strip().lower())
+    return None if not match else int(match[1]) * 100 + int((match[2] or '').ljust(2, '0') or 0)
+
+
 CONFIRM_HINT = "要下单请直接回复'确认下单'（金额超过 ¥200 时回复'确认下单 ¥X'）。"
 
 
@@ -350,7 +368,7 @@ def pinyin_hit(text):
 
 
 def classify(text):
-    """('withdraw', None) | ('confirm', cents or None) | ('none', None). When in doubt it is not a confirmation."""
+    """('withdraw', None) | ('confirm', cents or None) | ('bad_amount', None) | ('none', None). When in doubt it is not a confirmation."""
     raw = unicodedata.normalize('NFKC', str(text or '')).lower()
     plain = normalize(text)
     simple = to_simplified(plain)
@@ -363,10 +381,22 @@ def classify(text):
         return 'withdraw', None
     if re.search('[?？]', raw):  # a question is never a confirmation
         return 'none', None
+    core = _CORE_SEARCH.search(raw)
+    run = _AMOUNT_RUN.match(raw, core.end()) if core else None
+    if run and re.search(r'[0-9¥]|rmb|cny', run[1]):
+        # An amount is written after the word: read it strictly from the text as typed (punctuation stripping would glue
+        # "1,,0" or "1 0" into 10), then judge the rest of the sentence without it.
+        # one sentence comma / full stop right after the amount ("确认下单 10.00，谢谢") is not part of the amount
+        cents = parse_amount_cents(re.sub(r'[,.]\s*$', '', run[1].rstrip(), count=1))
+        rest = normalize(raw[:core.end()] + raw[run.end():])
+        if not CONFIRM_FULL.fullmatch(rest):
+            return 'none', None
+        return ('bad_amount', None) if cents is None else ('confirm', cents)
     match = CONFIRM_FULL.fullmatch(plain)
     if not match:
         return 'none', None
-    return 'confirm', (None if match[1] is None else int((Decimal(match[1]) * 100).to_integral_value()))
+    # Digits that survived punctuation stripping were not read by the strict amount reader above: not a confirmation.
+    return ('confirm', None) if match[1] is None else ('none', None)
 
 
 def is_negative(text):
@@ -392,11 +422,14 @@ def order_guard(value):
         kind,cents=classify(text)
         if text and kind=='withdraw' and value.get('tool_input',{}).get('user_confirmation')==text:
             return {}
-        if kind!='confirm':
+        if kind!='confirm' and kind!='bad_amount':
             return deny('最后一条用户消息不是标准确认。'+CONFIRM_HINT)
         args=value.get('tool_input',{})
         if args.get('user_confirmation')!=text:
             return deny('确认参数必须逐字等于最后一条用户消息，不能由助手代写。')
+        if kind=='bad_amount':
+            # Never a confirmation by words; the server turns it into the confirmation page (real) or a refusal (simulation).
+            return {}
         db=Path(os.environ.get('COUPON_SPLIT_HOME',Path.home()/'.coupon-split'))/'plans.sqlite3'
         with sqlite3.connect(db.resolve().as_uri()+'?mode=ro',uri=True) as conn:
             row=conn.execute('SELECT body FROM plans WHERE id=?',(args.get('plan_id'),)).fetchone()

@@ -573,7 +573,7 @@ async def withdraw_by_words(t, plan, option_id):
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
 async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
     """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；真实下单还需用户本人在确认弹窗（填入实付金额后接受）或本机确认页（点“确认下单”）再确认一次，任何宿主都一样、没有豁免，白名单确认句本身不足以下单；模拟模式只需白名单确认句。超过200元须额外确认具体金额。确认凭证10分钟有效。"""
-    t=token(); plan=service.load(plan_id,t); claim={}
+    t=token(); plan=service.load(plan_id,t); claim={}; amount_note=None
     from coupon_split import confirmation as cf
     selected=next(p for p in plan['plans'] if p['option_id']==option_id)
     # Decision order, see coupon_split/confirmation.py. 1: withdrawal beats everything else.
@@ -593,7 +593,14 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
         if confirmations.find_any(owner(t),plan_id,option_id,selected['price']):
             cf.validate_follow_up(user_confirmation,selected['price'])
         else:
-            cf.validate_confirmation(user_confirmation,selected['price'],high_amount_confirmation)
+            try:
+                cf.validate_confirmation(user_confirmation,selected['price'],high_amount_confirmation)
+            except cf.AmountFormatError:
+                # A malformed amount in the sentence is never a confirmation. Real orders fall back to the page (the click is
+                # the authorisation); simulation has no page, so it is refused with the same hint.
+                from coupon_split import humanconfirm as hc1
+                if not hc1.requires_human(upstream.allow_real or plan.get('real_orders_enabled'),SIMULATION_GATE):raise
+                amount_note=cf.AMOUNT_HINT
         try:
             selected=await prepare_place(t,plan,option_id,confirm_token,take_way)
         except ValueError as exc:
@@ -601,7 +608,7 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
             # Dead account authorisation is reported now, with the page that fixes it, not at some later step.
             url=await local_url()
             return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'},'next_tool':None},f'麦当劳账户授权已失效，订单没有创建。请重新连接：[打开授权页]({url}/setup)。保存后回来说“好了”，再重新报价确认。')
-        pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation),claim)
+        pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation,**({'_amount_note':amount_note} if amount_note else {})),claim)
         if pending is not None:return pending
     # 2: not quoted any more means the click already placed it; this only reads the result back.
     key = claim.get('key') if plan['state']=='quoted' else None
@@ -1449,6 +1456,7 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
     Simulation: the whitelist sentence alone is enough (demo), no dialog and no page.
     """
     from coupon_split import humanconfirm as hc
+    from coupon_split import confirmation as cf
     if not hc.requires_human(upstream.allow_real or plan.get('real_orders_enabled'),SIMULATION_GATE):
         return None
     async def settled(key):
@@ -1472,18 +1480,21 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
         confirmations.transition(record['key'],'revoked',('declined',))
         raise ValueError('你在确认页选择了先不下单，订单没有创建。想下单请重新说“确认”。')
     summary=hc.order_summary(plan,selected,take)
-    if record is None and ctx is not None and hc.supports_elicitation(ctx):
+    amount_note=call_args.pop('_amount_note',None)
+    if record is None and ctx is not None and not amount_note and hc.supports_elicitation(ctx):
         from pydantic import BaseModel
         class Confirm(BaseModel):
             confirm: bool = Field(description='确认下单')
-            amount_yuan: str = Field(title='实付金额',description='把本单实付金额填在这里（元，例如 %s）'%summary['price_yuan'])
+            amount_yuan: str = Field(title='实付金额',description='把本单实付金额填在这里（元，例如 %s；只写数字，可带一个 ¥ 或“元”，不要千分位逗号或多余符号，格式不对会改走确认页）'%summary['price_yuan'])
         try:
             answer=await asyncio.wait_for(ctx.elicit(hc.elicitation_message(summary),Confirm),55)
         except Exception:
             answer=None
-        if hc.elicitation_accepted(answer,summary):
+        verdict=hc.elicitation_result(answer,summary)
+        if verdict=='ok':
             if claim is not None:claim['proof']='elicitation'
             return None
+        if verdict=='bad_amount':amount_note=cf.AMOUNT_HINT
         # Declined, dismissed or unanswered (some hosts auto-decline without a UI): nothing is created;
         # the person can still confirm on the page, or simply not click.
     first=record is None
@@ -1511,6 +1522,7 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
           f"页面上会再显示一遍 {summary['store']} 的餐品和实付 ¥{summary['price_yuan']}，点“确认下单”后我才会创建订单；不点就不会下单。"
           '点完订单立刻创建，不用回来说话。回复“确认下单”才会下单；说“取消”或“不要了”随时撤回。')
     if not summary['real']:text+='\n\n当前为模拟模式，不会产生真实订单。'
+    if amount_note:text='**'+amount_note+'。**\n\n'+text
     data={'stage':'confirm','state':'confirm_required','plan_id':plan['plan_id'],'confirm_url':link,'next_tool':'place_orders',
           'next_arguments':{k:v for k,v in call_args.items() if v},
           'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。用户点“确认下单”的那一刻订单就会创建，不用再等用户回来说话。不要自己打开、提交或代替用户点这个页面；用户说取消/不要了/别下单/等等，把原话逐字传给 place_orders；'+confirm_rule_text()}

@@ -220,6 +220,24 @@ CONFIRM_CORES = ('确认下单', '确认', '同意下单', '就这样下单')
 CONFIRM_SUFFIXES = ('谢谢你', '谢谢', '多谢', '谢了', '麻烦了', '辛苦了', '吧')
 CONFIRM_FULL = re.compile(
     '(?:' + '|'.join(CONFIRM_PREFIXES) + ')*(?:' + '|'.join(CONFIRM_CORES) + r')(?:¥?(\d+(?:\.\d{1,2})?)(?:元|块)?)?(?:' + '|'.join(CONFIRM_SUFFIXES) + ')*')
+# One strict amount grammar for every place a person's amount is read (the whitelist sentence and the elicitation form):
+# NFKC + strip, then the WHOLE text must be: [one currency ¥ / RMB / CNY] [spaces] integer [. 1-2 decimals] [spaces] [one unit 元 / 块].
+# No thousands separator, no sign, no exponent, no second symbol, no letters other than the symbols above. Compared in cents, exactly.
+AMOUNT_FULL = re.compile(r'(?:(?:¥|rmb|cny)[ 	]*)?(0|[1-9][0-9]{0,8})(?:\.([0-9]{1,2}))?(?:[ 	]*(?:元|块))?')
+AMOUNT_HINT = '金额格式不对，请在确认页点确认下单'
+# After the confirmation word: the run of characters that can only belong to an amount (digits, symbols, separators, signs, units).
+_AMOUNT_RUN = re.compile(r'[\s:;、]*,?[\s:;、]*((?:[0-9¥.,+\-−e\s元块]|rmb|cny)+)')
+_CORE_SEARCH = re.compile('|'.join(CONFIRM_CORES))
+
+
+def parse_amount_cents(value):
+    """Strict amount -> integer cents, or None when the text is not exactly an amount (see AMOUNT_FULL)."""
+    if not isinstance(value, str):
+        return None
+    match = AMOUNT_FULL.fullmatch(unicodedata.normalize('NFKC', value).strip().lower())
+    return None if not match else int(match[1]) * 100 + int((match[2] or '').ljust(2, '0') or 0)
+
+
 CONFIRM_HINT = "要下单请直接回复'确认下单'（金额超过 ¥200 时回复'确认下单 ¥X'）。"
 
 
@@ -249,7 +267,7 @@ def pinyin_hit(text):
 
 
 def classify(text):
-    """('withdraw', None) | ('confirm', cents or None) | ('none', None). When in doubt it is not a confirmation."""
+    """('withdraw', None) | ('confirm', cents or None) | ('bad_amount', None) | ('none', None). When in doubt it is not a confirmation."""
     raw = unicodedata.normalize('NFKC', str(text or '')).lower()
     plain = normalize(text)
     simple = to_simplified(plain)
@@ -262,10 +280,22 @@ def classify(text):
         return 'withdraw', None
     if re.search('[?？]', raw):  # a question is never a confirmation
         return 'none', None
+    core = _CORE_SEARCH.search(raw)
+    run = _AMOUNT_RUN.match(raw, core.end()) if core else None
+    if run and re.search(r'[0-9¥]|rmb|cny', run[1]):
+        # An amount is written after the word: read it strictly from the text as typed (punctuation stripping would glue
+        # "1,,0" or "1 0" into 10), then judge the rest of the sentence without it.
+        # one sentence comma / full stop right after the amount ("确认下单 10.00，谢谢") is not part of the amount
+        cents = parse_amount_cents(re.sub(r'[,.]\s*$', '', run[1].rstrip(), count=1))
+        rest = normalize(raw[:core.end()] + raw[run.end():])
+        if not CONFIRM_FULL.fullmatch(rest):
+            return 'none', None
+        return ('bad_amount', None) if cents is None else ('confirm', cents)
     match = CONFIRM_FULL.fullmatch(plain)
     if not match:
         return 'none', None
-    return 'confirm', (None if match[1] is None else int((Decimal(match[1]) * 100).to_integral_value()))
+    # Digits that survived punctuation stripping were not read by the strict amount reader above: not a confirmation.
+    return ('confirm', None) if match[1] is None else ('none', None)
 
 
 def is_negative(text):
@@ -280,7 +310,7 @@ def _quoted(words):
 
 def confirm_rule_text():
     """The one sentence every document and tool description uses for what counts as a confirmation (generated from the whitelist)."""
-    return ('只有这四种标准确认句才算确认：%s（后面可带金额，如“确认下单 ¥10.00”，超过 ¥200 时必须带金额；前面可带%s，后面可带%s），'
+    return ('只有这四种标准确认句才算确认：%s（后面可带金额，如“确认下单 ¥10.00”，超过 ¥200 时必须带金额；金额必须是规范写法：可选一个货币符号 ¥ ￥ RMB CNY，整数加最多两位小数，可选一个单位元或块，不能有千分位逗号、多个符号或多个小数点，格式不对不算确认，改在确认页点确认下单；前面可带%s，后面可带%s），'
             '其余话一律不算确认，服务端只提示用户回复“确认下单”。') % (
         _quoted(CONFIRM_CORES), _quoted(CONFIRM_PREFIXES[:-2] + ('OK', 'okay')), _quoted(CONFIRM_SUFFIXES))
 
@@ -294,9 +324,14 @@ def is_question(text):
     return bool(re.search(r'[?？]\s*$|(?:吗|呢|么)[。！!\s]*$|是不是|多少钱|为什么|怎么|能不能|可不可以', str(text or '').strip()))
 
 
+class AmountFormatError(ValueError):
+    """A confirmation sentence whose amount is not a strict amount: never a confirmation, real mode falls back to the page."""
+
+
 def validate_confirmation(original,price,extra=''):
     expected=f'确认下单 ¥{price/100:.2f}'
     kind,cents=classify(original)
+    if kind=='bad_amount':raise AmountFormatError(AMOUNT_HINT)
     if kind!='confirm':raise ValueError(CONFIRM_HINT)
     if price>20000:
         # Never allow a host-invented auxiliary string to upgrade a bare 确认.
