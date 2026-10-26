@@ -10,3 +10,4 @@
 .confirm button.go{background:var(--act);border-color:var(--act);color:#fff;font-weight:650}
 .confirm button:disabled{opacity:.55;cursor:default}
 .confirm .done{font-weight:650}
+.confirm a{color:var(--act);font-weight:650;display:inline-block;min-height:44px;line-height:44px}

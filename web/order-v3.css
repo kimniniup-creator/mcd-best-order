@@ -417,3 +417,9 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 
 /* Keep the visible switch compact inside a real 44px pointer target. */
 .switch.sw{height:44px;min-height:44px;border-radius:22px}.switch.sw i{top:10px}
+/* r21 N-M04: an option and its quantity stepper are one unit, so a count can never drift to its neighbour. */
+#sheet .options.has-step{display:grid;grid-template-columns:minmax(0,1fr)}
+#sheet .choice-row{display:flex;align-items:stretch;gap:8px;min-width:0}
+#sheet .choice-row>.choice{flex:1 1 auto;min-width:0}
+#sheet .choice-row>.stepper{flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px}
+@media(min-width:700px){#sheet .options.has-step{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}

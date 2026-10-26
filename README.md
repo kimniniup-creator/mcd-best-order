@@ -15,7 +15,7 @@
 也可自己运行（先预览，核对目标后再加 `--apply`）：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host cursor
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split setup --host cursor
 ```
 
 Codex 的 IDE/CLI 一键方式是 `--host codex-ide`（同时装 Skill，建议使用）；没有 Skill 的宿主上，笼统的一句话可能不会立刻触发点餐工具，可以说得具体些（例如“我要吃麦当劳，来份板烧”）。
@@ -112,7 +112,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件配置工具权限。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单和撤回仍保留逐次允许；wait_payment 和 pay_card 只读查询无需逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -120,7 +120,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -152,7 +152,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 下单或撤回出了问题，在终端执行下面的命令，导出一份诊断文件，发给开发。文件按白名单字段生成（状态、商品码和数量、时间、耗时、错误码、原因标签如 `rate-limited`），不含 Token、订单号、券码、地址、门店名和地址、手机号、姓名、付款链接，也不复制麦当劳的原话；发之前自己打开看一眼：
 
 ```text
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split diagnose
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split diagnose
 ```
 
 文件保存在用户主目录，名为 `mcd-order-diagnosis-<时间>.json`。本机的 `orders.log`（在点餐状态目录里，不会被导出原文）每次下单、撤回只记录耗时、HTTP 状态、麦当劳的错误码和说明、traceId。
@@ -160,7 +160,7 @@ uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/rel
 ## 宿主已知限制
 
 - **Codex 无头模式（`codex exec`）会“挂起”，原因在宿主和模型服务，不在本插件**（0.7.3 隔离实测，Codex 0.162.1）：
-  1. 从脚本、CI 或别的 Agent 里启动 `codex exec "<提示>"` 时，如果标准输入是一根没有关闭的管道，Codex 会在日志里写 `Reading additional input from stdin...` 并一直等输入结束，整轮不开始。启动时务必关闭标准输入：PowerShell 用 `codex exec ... < NUL`，bash 用 `< /dev/null`，Python 用 `stdin=subprocess.DEVNULL`。
+  1. 从脚本、CI 或别的 Agent 里启动 `codex exec "<提示>"` 时，如果标准输入是一根没有关闭的管道，Codex 会在日志里写 `Reading additional input from stdin...` 并一直等输入结束，整轮不开始。启动时务必关闭标准输入：Windows PowerShell 不支持 `<` 重定向（会报 RedirectionNotSupported），要交给 cmd：`cmd /c "codex exec ... < NUL"`（本机 PowerShell 5.1 实测可用；`$null | codex exec ...` 实测会送进一个 BOM 字符，不算真正关闭）；macOS/Linux 用 `codex exec ... < /dev/null`；Python 用 `stdin=subprocess.DEVNULL`。
   2. 模型服务返回 `429 Too Many Requests`（`exceeded retry limit, last status: 429`）时，`--json` 输出里只有 `thread.started`、`turn.started`，之后什么都没有，也不报错；表现就是“卡住”。这是账号或模型的限流或容量问题。换一个可用的模型、稍后重试，脚本里给每一轮设超时并重试。
   本插件已经把单次工具等待控制在宿主超时以内（`get_cart` 约 25 秒，`wait_payment` 最多 60 秒，确认页等待约 50 秒），隔离实测 Codex 在 20、58、65、125 秒的工具调用里都正常返回；无头模式下 Codex 对 MCP 确认弹窗（elicitation）立即回复“拒绝”，本插件随即给出本机确认页，不会卡住。
 - **Claude Code 无头模式（`claude -p`）** 无法弹出 `place_orders` 要求的人工批准，所以走不到下单这一步；请在交互界面使用，或用本机确认页的宿主（Codex、Cursor、dsh 等）。
@@ -180,14 +180,14 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.3 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.3)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.4 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.4)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。

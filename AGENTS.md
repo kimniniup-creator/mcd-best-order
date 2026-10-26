@@ -6,7 +6,7 @@
 2. 已装 uv 时运行下面命令，把 `<host>` 换为表中的名字。先预览；用户的“帮我安装”授权包含对应 MCP 注册，可核对路径后添加 `--apply`。没有安装授权时只预览。不要改模型、全局审批或其他 MCP。
 
    ```sh
-   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.3/coupon_split-0.7.3-py3-none-any.whl coupon-split setup --host <host>
+   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split setup --host <host>
    ```
 
 3. 默认使用文档支持的项目配置；只提供全局配置的宿主会显示实际目标。隔离环境用 `--project <workspace> --home <isolated-home>` 或 `--config <actual-config-path>`。保留已有条目；写入前安装器会保留原文件备份。不要把 Token 写到仓库或聊天。

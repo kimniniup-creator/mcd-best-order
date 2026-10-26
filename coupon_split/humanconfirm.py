@@ -61,7 +61,7 @@ class ConfirmationStore:
         for record in self._rows(owner, plan_id):
             if (record['option_id'], record['take_way'], record['price']) == (option_id, take_way or '', price):
                 current = self.get(record['key'])
-                if current['state'] in {'pending', 'approved', 'placing', 'declined'}:
+                if current['state'] in {'pending', 'approved', 'placing', 'creating', 'declined'}:
                     return current
         return None
 
@@ -70,7 +70,7 @@ class ConfirmationStore:
         for record in self._rows(owner, plan_id):
             if (record['option_id'], record['price']) == (option_id, price):
                 current = self.get(record['key'])
-                if current['state'] in {'pending', 'approved', 'placing'}:
+                if current['state'] in {'pending', 'approved', 'placing', 'creating'}:
                     return current
         return None
 
@@ -102,12 +102,56 @@ class ConfirmationStore:
         return self.transition(key, state, only_from) or self.get(key)
 
     def revoke(self, owner, plan_id):
-        """The person withdrew in conversation: every live confirmation of this plan stops being usable."""
-        count = 0
+        """The person withdrew in conversation. Returns how many confirmations this stopped (see withdraw)."""
+        revoked, flagged = self.withdraw(owner, plan_id)
+        return revoked + flagged
+
+    def withdraw(self, owner, plan_id):
+        """Atomic withdrawal for every live confirmation of this plan -> (revoked, flagged).
+
+        State machine of one confirmation (every move is one compare-and-set in SQLite):
+        pending -> approved|declined|revoked; pending|approved -> placing (a click is being
+        processed: re-checking the goods); placing -> creating (committed: create-order is about
+        to be, or has been, sent; see commit); creating -> used|failed.
+        A withdrawal arriving while the record is pending / approved / declined / placing
+        revokes it for good, so commit() later refuses and nothing is created. Arriving while
+        it is creating, create-order may already be out: the record only gets the
+        withdraw_requested flag, and whoever finishes the creation withdraws the new order.
+        """
+        revoked = flagged = 0
         for record in self._rows(owner, plan_id):
-            if self.transition(record['key'], 'revoked', ('pending', 'approved', 'declined')):
-                count += 1
-        return count
+            if self.transition(record['key'], 'revoked', ('pending', 'approved', 'declined', 'placing')):
+                revoked += 1
+            elif self.transition(record['key'], 'creating', ('creating',), withdraw_requested=True):
+                flagged += 1
+        return revoked, flagged
+
+    def commit(self, key):
+        """Last gate before create-order is sent. False when the person withdrew meanwhile."""
+        if self.transition(key, 'creating', ('placing',)):
+            return True
+        record = self.get(key)
+        return bool(record and record['state'] == 'creating')
+
+    def finish(self, key, state='used', force=False):
+        """creating|placing -> used|failed unless a withdrawal arrived; returns False then (the caller withdraws first)."""
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT body FROM confirmations WHERE key=?', (key,)).fetchone()
+            if not row:
+                return True
+            record = json.loads(row[0])
+            if record['state'] not in ('creating', 'placing'):
+                return True
+            if record.get('withdraw_requested') and state == 'used' and not force:
+                return False
+            record['state'] = state
+            record[state + '_at'] = time.time()
+            db.execute('INSERT OR REPLACE INTO confirmations VALUES (?,?)', (key, json.dumps(record, ensure_ascii=False)))
+            return True
+
+    def creating(self, owner, plan_id):
+        return [r for r in self._rows(owner, plan_id) if r['state'] == 'creating']
 
     def take_failure(self, owner, plan_id):
         """The click happened but the order could not be created: tell the agent once."""

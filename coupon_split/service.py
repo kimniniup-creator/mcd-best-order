@@ -28,10 +28,18 @@ VERIFY_QUERY_TIMEOUT = 10
 # first failed read, 30 s after later ones (so roughly 120 / 150 / 180 s) instead of one try per status
 # call, which was 113 reads between 120 and 180 s in 0.7.2 and invites McDonald's rate limit.
 VERIFY_RETRY_GAPS = (15, 30)
+# When part of the order is already on the account and the rest is still unknown, the rollback of what exists
+# (query, cancel, verify: three sequential calls per order) needs time inside the same wall-clock limit, so the
+# conclusion starts this many seconds before VERIFY_HARD_STOP; every call it makes is capped by what is left.
+VERIFY_CANCEL_RESERVE = 20
 
 
 class NotSent(ValueError):
     """Refused locally before create-order was sent: an explicit, harmless failure."""
+
+
+class Withdrawn(ValueError):
+    """The person withdrew after the click and before create-order was sent: nothing was created."""
 
 
 def classify(exc):
@@ -115,9 +123,10 @@ class Service:
         self.save(plan)
         return plan
 
-    async def place(self, token, plan_id, confirm_token, option_id="0"):
+    async def place(self, token, plan_id, confirm_token, option_id="0", guard=None):
+        """guard() is the last gate: called right before create-order is sent, False means the person withdrew."""
         async with self.locks.setdefault("place:"+owner(token),asyncio.Lock()):
-            return await self._place(token,plan_id,confirm_token,option_id)
+            return await self._place(token,plan_id,confirm_token,option_id,guard)
 
     def _record(self, plan, op, started, exc=None, data=None):
         """Redacted per-attempt diagnostics (plan + orders.log); never raises."""
@@ -131,7 +140,7 @@ class Service:
         if self.log_dir:
             diagnostics.write_log(self.log_dir, plan['plan_id'], entry)
 
-    async def _place(self, token, plan_id, confirm_token, option_id="0"):
+    async def _place(self, token, plan_id, confirm_token, option_id="0", guard=None):
         async with self.locks.setdefault(plan_id, asyncio.Lock()):
             plan = self.load(plan_id, token)
             if not hmac.compare_digest(confirm_token, plan["confirm_token"]):
@@ -149,6 +158,11 @@ class Service:
                 before = (await self.upstream.call(token,"order-list",{}))["data"]["list"]
                 plan.update(before_order_ids=[o["orderId"] for o in before], placing_started=time.time(), pending_requests=selected["orders"])
             self.save(plan)
+            if guard is not None and not guard():
+                # Withdrawn before anything was sent: back to a plain quote, no order exists.
+                plan.update(state="quoted")
+                self.save(plan)
+                raise Withdrawn("用户在下单前表示不下单，订单没有创建")
             async def create(order):
                 req = dict(order["request"])
                 if self.upstream.allow_real and not plan.get("elements_validated"):
@@ -218,7 +232,7 @@ class Service:
             self.save(plan)
             return plan
 
-    async def _conclude(self, token, plan, kind):
+    async def _conclude(self, token, plan, kind, deadline_at=None):
         """Finish verification. Found orders are kept (to pay); anything else ends as a clear failure."""
         remaining = plan.get("pending_requests", [])
         plan["pending_requests"] = []
@@ -236,7 +250,7 @@ class Service:
                 plan["cancel_reason"] = "这次下单只成功了一部分，为避免只下成一半，已撤回已下成的单，没扣钱。"
             plan["state"] = "rollback_pending"
             self.save(plan)
-            return await self._cancel(token, plan)
+            return await self._cancel(token, plan, deadline_at=deadline_at)
         if kind == 'business' and plan.get("failure"):
             info = plan["failure"]
         elif kind == 'manual':
@@ -327,7 +341,10 @@ class Service:
         deadline_at = started + VERIFY_HARD_STOP
         elapsed = time.time() - started
         if elapsed >= VERIFY_HARD_STOP:
+            # Late arrival (e.g. after a restart): the limit is already behind us, the rollback duty is not.
             return await self._conclude(token, plan, 'manual')
+        if elapsed >= VERIFY_HARD_STOP - (VERIFY_CANCEL_RESERVE if plan.get("orders") else 0):
+            return await self._conclude(token, plan, 'manual', deadline_at)
         checks = plan.setdefault("verify_checks", [])
         due = [o for o in VERIFY_OFFSETS if o <= elapsed and o not in checks]
         final_phase = elapsed >= VERIFY_CONCLUDE
@@ -346,20 +363,26 @@ class Service:
         if info["ok"] and elapsed >= 100:
             plan["verify_read_ok"] = True
         if not plan.get("pending_requests"):
-            return await self._conclude(token, plan, 'found')
+            return await self._conclude(token, plan, 'found', deadline_at)
         if final_phase and info["ambiguous"]:
-            return await self._conclude(token, plan, 'manual')
+            return await self._conclude(token, plan, 'manual', deadline_at)
         if final_phase and plan.get("verify_read_ok"):
-            return await self._conclude(token, plan, 'not_created')
+            return await self._conclude(token, plan, 'not_created', deadline_at)
         if elapsed >= VERIFY_HARD_STOP:
-            return await self._conclude(token, plan, 'manual')
+            return await self._conclude(token, plan, 'manual', deadline_at)
         self.save(plan)
         return plan
 
-    async def _cancel(self, token, plan, only_expiring=False):
+    async def _call(self, token, name, args, deadline_at=None):
+        """Upstream call; inside a wall-clock budget each request gets min(time left, VERIFY_QUERY_TIMEOUT)."""
+        if deadline_at is None:
+            return await self.upstream.call(token, name, args)
+        return await self._ask(token, name, args, deadline_at)
+
+    async def _cancel(self, token, plan, only_expiring=False, deadline_at=None):
         plan['rollback_scope']='expiring' if only_expiring else 'all'
         if not plan["dry_run"] and plan.get("unknown_orders"):
-            await self._reconcile(token,plan)
+            await self._reconcile(token,plan,deadline_at)
         failed = False
         for order in plan["orders"]:
             if str(order.get("status","10")) != "10":
@@ -368,7 +391,7 @@ class Service:
                 continue
             if not plan["dry_run"]:
                 try:
-                    current = (await self.upstream.call(token, "query-order", {"orderId": order["orderId"]}))["data"]
+                    current = (await self._call(token, "query-order", {"orderId": order["orderId"]}, deadline_at))["data"]
                     if str(current.get("status")) == "60":
                         order.update(status="60",orderStatus="已撤回，退券待核验")
                         continue
@@ -380,14 +403,14 @@ class Service:
                         continue
                     started = time.monotonic()
                     try:
-                        result = await self.upstream.call(token, "cancel-order", {"orderId": order["orderId"], "cancelReasonCode": 3})
+                        result = await self._call(token, "cancel-order", {"orderId": order["orderId"], "cancelReasonCode": 3}, deadline_at)
                     except Exception as exc:
                         self._record(plan, 'cancel-order', started, exc)
                         raise
                     self._record(plan, 'cancel-order', started, None, result)
                     if result["data"].get("cancelResult") is not True:
                         raise ValueError("取消未确认")
-                    verified=(await self.upstream.call(token,"query-order",{"orderId":order["orderId"]}))["data"]
+                    verified=(await self._call(token,"query-order",{"orderId":order["orderId"]},deadline_at))["data"]
                     if str(verified.get('status'))!='60':
                         raise ValueError('取消状态尚未核实')
                 except Exception:
