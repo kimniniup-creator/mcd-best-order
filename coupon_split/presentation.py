@@ -229,7 +229,7 @@ def markdown(plan):
             if p.get('buys_card'):rows += [f"买卡后本单比不买卡再省 {money(plan['no_card']['price']-p['price'])}。"]
         if plan.get('take_options'):
             rows += ['\n请选择取餐方式：'+'；'.join(str(i)+' '+(v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐') for i,v in enumerate(plan['take_options'],1))+'。']
-        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认下单** 才会下单；说“取消”或“不要了”随时撤回。之后还会请你在浏览器确认页或弹出的确认框里再点一次“确认下单”。']
+        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认下单** 才会下单；说“取消”或“不要了”随时撤回。'+('真实下单还需要你在浏览器确认页或弹出的确认弹窗里再确认一次（Claude Code、Codex 也一样），因为只有这一步能证明是你本人在下单。' if plan.get('real_orders_enabled') else '模拟模式回复“确认下单”即可演示，不产生真实订单。')]
         if p['price']>20000:rows += [f"\n本单超过 ¥200，还需追加确认：**确认下单 ¥{p['price']/100:.2f}**。"]
         if not plan.get('real_orders_enabled'):rows += ['\n当前为模拟模式，不产生真实订单。']
         if plan.get('comparison_summary'):rows += ['\n比较摘要：'+plan['comparison_summary']['text']+'\n\n'+plan['comparison_summary']['scope']]

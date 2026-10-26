@@ -15,10 +15,10 @@ import time
 from pathlib import Path
 
 TTL_SECONDS = 600
-# A host that blocks tools behind its own un-bypassable approval and that sends this clientInfo name.
-# Claude Code marks place_orders anthropic/requiresUserInteraction; even bypassPermissions
-# cannot skip it (verified in r19 by running the tool headless: "requires user interaction").
-TRUSTED_CLIENTS = ('claude-code',)
+# 0.7.8: there is NO exemption by host identity. clientInfo, User-Agent, environment variables and
+# anything else a client can report about itself prove nothing about a person having approved.
+# A real order needs a human confirmation the server itself can verify: an MCP elicitation form the
+# person accepted with the quoted amount typed back, or a click on the local confirmation page.
 
 
 class ConfirmationStore:
@@ -163,16 +163,36 @@ class ConfirmationStore:
         return None
 
 
-def client_name(ctx):
+def requires_human(real, simulation_gate=False):
+    """Real orders always need the person's own confirmation; simulation does not (demos), unless a test asks for it."""
+    return bool(real or simulation_gate)
+
+
+def normalise_amount(value):
+    """'¥10.00' / '10' / '10元' -> Decimal('10.00'); anything else -> None."""
+    from decimal import Decimal, InvalidOperation
+    text = str(value if value is not None else '').strip().replace('¥', '').replace('￥', '').replace('元', '').replace(',', '').strip()
+    import re
+    if not re.fullmatch(r'[0-9]{1,9}(\.[0-9]{1,2})?', text):
+        return None
     try:
-        return (ctx.request_context.session.client_params.clientInfo.name or '').lower()
+        return Decimal(text).quantize(Decimal('0.01'))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def elicitation_accepted(answer, summary):
+    """True only for an explicit accept whose filled-in amount equals this quote. decline / cancel / anything else is False."""
+    try:
+        if answer is None or getattr(answer, 'action', None) != 'accept':
+            return False
+        data = answer.data
+        if getattr(data, 'confirm', None) is not True:
+            return False
+        typed = normalise_amount(getattr(data, 'amount_yuan', None))
+        return typed is not None and typed == normalise_amount(summary['price_yuan'])
     except Exception:
-        return ''
-
-
-def trusted_host(ctx):
-    """True only when the host itself provably demands a person's approval for this tool."""
-    return ctx is not None and any(client_name(ctx).startswith(name) for name in TRUSTED_CLIENTS)
+        return False
 
 
 def supports_elicitation(ctx):

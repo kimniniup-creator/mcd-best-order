@@ -5,7 +5,7 @@ Decision order of place_orders (first match wins; each step is tested):
 0. The host agent judges "does the user want out" and calls withdraw_order / cancel_plan (or the user presses 撤回这单 on the
    confirmation / payment page, no language involved). Everything below is the server-side safety net.
 1. Withdrawal first. If the user's latest words contain a STRONG word of the withdraw list
-   (取消 撤回 撤单 撤销 撤订 退单 退订 不要了 不要这单 别下单 不下了 不点了 不买了 算了 no cancel stop) anywhere,
+   (取消 撤回 撤单 撤销 撤订 退单 退订 不要了 不要这单 别下单 不下了 不点了 不买了 算了 cancel stop) anywhere,
    nothing else is looked at (a sentence with both such a word and "确认" is a withdrawal): not an earlier
    approval, not a trusted host, not a click. Weak words (不要 等等 稍等 改一下 换一下 先别 ...) are not in the list on
    purpose: "不要香菜" or "等一下我看看菜单" is an edit, only the agent can tell, and it uses withdraw_order.
@@ -212,7 +212,7 @@ _CHAR_PINYIN = {}
 for _syllable, _chars in _PINYIN.items():
     for _char in _chars:
         _CHAR_PINYIN.setdefault(_char, set()).add(_syllable)
-WITHDRAW_EN = re.compile(r'(?<![a-z])(?:no|cancel|stop)(?![a-z])')
+WITHDRAW_EN = re.compile(r'(?<![a-z])(?:cancel|stop)(?![a-z])')
 # The whitelist, written once. CONFIRM_FULL is built from these three tuples and every document sentence about "what counts
 # as a confirmation" is generated from them (scripts/sync_confirm_docs.py; tests/test_r23.py fails when a document differs).
 CONFIRM_PREFIXES = ('好的', '好', '嗯嗯', '嗯', '对', '是的', 'ok', 'okay')
@@ -287,7 +287,7 @@ def confirm_rule_text():
 
 def withdraw_rule_text():
     """The withdraw / pause word list as shown to agents (generated from WITHDRAW_ZH)."""
-    return '、'.join(WITHDRAW_ZH) + '、no、cancel、stop（繁体写法和同音错别字同样算，例如“取銷”“撤会”）这些明确的词'
+    return '、'.join(WITHDRAW_ZH) + '、cancel、stop（繁体写法和同音错别字同样算，例如“取銷”“撤会”）这些明确的词'
 
 
 def is_question(text):

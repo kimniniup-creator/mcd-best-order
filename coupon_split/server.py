@@ -45,6 +45,7 @@ LOCAL_KEY = access_file.read_text(encoding="utf-8").strip()
 UPSTREAM_TOKEN = load_token()
 request_base = contextvars.ContextVar("request_base",default="")
 credential = contextvars.ContextVar("credential", default="")
+SIMULATION_GATE = False  # tests only: also demand the human confirmation in simulation
 upstream = Upstream(allow_real=os.environ.get("ALLOW_REAL_ORDERS", "true").lower() == "true" and os.environ.get("COUPON_SPLIT_SIMULATE", "false").lower() != "true")
 service = Service(upstream, str(runtime / "plans.sqlite3"))
 from coupon_split.humanconfirm import ConfirmationStore
@@ -571,7 +572,7 @@ async def withdraw_by_words(t, plan, option_id):
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
 async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
-    """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
+    """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；真实下单还需用户本人在确认弹窗（填入实付金额后接受）或本机确认页（点“确认下单”）再确认一次，任何宿主都一样、没有豁免，白名单确认句本身不足以下单；模拟模式只需白名单确认句。超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t); claim={}
     from coupon_split import confirmation as cf
     selected=next(p for p in plan['plans'] if p['option_id']==option_id)
@@ -605,7 +606,11 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
     # 2: not quoted any more means the click already placed it; this only reads the result back.
     key = claim.get('key') if plan['state']=='quoted' else None
     if plan['state']=='quoted' and not key:
-        # Trusted host / dialog / direct call: still register the attempt, so a "别下单" that arrives now can find it.
+        # Last line of defence: a real order is never created without a verified human step (accepted elicitation or page click).
+        from coupon_split import humanconfirm as hc0
+        if hc0.requires_human(upstream.allow_real or plan.get('real_orders_enabled'),SIMULATION_GATE) and claim.get('proof')!='elicitation':
+            raise ValueError('真实下单需要你本人在确认页或确认弹窗中确认一次，订单没有创建。')
+        # Accepted dialog / simulation: still register the attempt, so a "别下单" that arrives now can find it.
         take=(plan.get('order_elements') or {}).get('takeWayCode','')
         from coupon_split import humanconfirm as hc
         record=confirmations.create(owner(t),plan_id,option_id,take,selected['price'],hc.order_summary(plan,selected,take))
@@ -1439,12 +1444,18 @@ async def wait_click_outcome(key, seconds=30):
 async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim=None):
     """Server-side, human-completed confirmation. None means: go ahead and place the order.
 
-    Order: host that provably asks the person (Claude Code) -> MCP elicitation -> local page.
-    Over a direct Python call (no MCP session, tests) the caller already is the process.
+    Real orders (ALLOW_REAL_ORDERS on the server): MCP elicitation that the person accepted with the quoted
+    amount typed back -> otherwise the local confirmation page. No exemption by host identity, ever.
+    Simulation: the whitelist sentence alone is enough (demo), no dialog and no page.
     """
     from coupon_split import humanconfirm as hc
-    if ctx is None or hc.trusted_host(ctx):
+    if not hc.requires_human(upstream.allow_real or plan.get('real_orders_enabled'),SIMULATION_GATE):
         return None
+    async def settled(key):
+        # The page click placed (or is placing) the order: the click is the proof.
+        outcome=await wait_click_outcome(key)
+        if claim is not None:claim['proof']='click'
+        return outcome
     take=(plan.get('order_elements') or {}).get('takeWayCode','')
     price=selected['price']
     account=owner(t)
@@ -1456,20 +1467,23 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
             return None
         record=confirmations.get(record['key'])
     if record and record['state'] in {'placing','creating'}:
-        return await wait_click_outcome(record['key'])
+        return await settled(record['key'])
     if record and record['state']=='declined':
         confirmations.transition(record['key'],'revoked',('declined',))
         raise ValueError('你在确认页选择了先不下单，订单没有创建。想下单请重新说“确认”。')
     summary=hc.order_summary(plan,selected,take)
-    if record is None and hc.supports_elicitation(ctx):
+    if record is None and ctx is not None and hc.supports_elicitation(ctx):
         from pydantic import BaseModel
         class Confirm(BaseModel):
             confirm: bool = Field(description='确认下单')
+            amount_yuan: str = Field(title='实付金额',description='把本单实付金额填在这里（元，例如 %s）'%summary['price_yuan'])
         try:
             answer=await asyncio.wait_for(ctx.elicit(hc.elicitation_message(summary),Confirm),55)
         except Exception:
             answer=None
-        if answer is not None and answer.action=='accept' and getattr(answer.data,'confirm',False):return None
+        if hc.elicitation_accepted(answer,summary):
+            if claim is not None:claim['proof']='elicitation'
+            return None
         # Declined, dismissed or unanswered (some hosts auto-decline without a UI): nothing is created;
         # the person can still confirm on the page, or simply not click.
     first=record is None
@@ -1484,7 +1498,7 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
                 if claim is not None:claim['key']=current['key']
                 return None
             if current['state'] in {'placing','creating','used'}:
-                return await wait_click_outcome(current['key'])
+                return await settled(current['key'])
             if current['state'] in {'declined','expired','revoked','failed'}:
                 if current['state']=='failed':
                     confirmations.transition(current['key'],'failure_reported',('failed',))
@@ -1570,7 +1584,8 @@ async def confirm_page(request):
     if request.method=='POST':
         origin=request.headers.get('origin','')
         site=request.headers.get('sec-fetch-site','same-origin')
-        if origin!='http://'+request.headers.get('host','') or site not in {'same-origin','none'}:
+        # A browser always sends Sec-Fetch-Site; a bare script does not. Approving needs the browser's own header.
+        if origin!='http://'+request.headers.get('host','') or site not in {'same-origin','none'} or (path.endswith('/approve') and 'sec-fetch-site' not in request.headers):
             return JSONResponse({'error':'只能在确认页上点击'},status_code=403,headers=headers)
         if path.endswith('/approve'):
             plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans WHERE id=?',(record['plan_id'],))),None)

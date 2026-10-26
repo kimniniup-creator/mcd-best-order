@@ -313,7 +313,7 @@ _CHAR_PINYIN = {}
 for _syllable, _chars in _PINYIN.items():
     for _char in _chars:
         _CHAR_PINYIN.setdefault(_char, set()).add(_syllable)
-WITHDRAW_EN = re.compile(r'(?<![a-z])(?:no|cancel|stop)(?![a-z])')
+WITHDRAW_EN = re.compile(r'(?<![a-z])(?:cancel|stop)(?![a-z])')
 # The whitelist, written once. CONFIRM_FULL is built from these three tuples and every document sentence about "what counts
 # as a confirmation" is generated from them (scripts/sync_confirm_docs.py; tests/test_r23.py fails when a document differs).
 CONFIRM_PREFIXES = ('好的', '好', '嗯嗯', '嗯', '对', '是的', 'ok', 'okay')
