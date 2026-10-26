@@ -394,7 +394,7 @@ async def quote_best(items: list[str] | list[dict], store_code: str, allow_combo
     carts[sid]=active
     memory.write(owner(t),dict(previous,active_session=sid))
     data=quote_summary(plan)
-    data.update(session_id=sid,confirmation_instruction='报价后结束本回合。用户下一条说“确认”或“确认下单 ¥金额”时，直接调用 place_orders；不要调用 mcd_start。',
+    data.update(session_id=sid,confirmation_instruction='报价后结束本回合。用户下一条说“确认下单”（超过 ¥200 说“确认下单 ¥金额”）时，直接调用 place_orders；说“取消/不要了”同样传给 place_orders 撤回；不要调用 mcd_start。',
         next_arguments={'plan_id':plan['plan_id'],'confirm_token':plan['confirm_token']})
     return result(data,markdown(plan))
 
@@ -528,7 +528,7 @@ async def withdraw_order(t, plan, option_id):
 
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。用户说别下单/不要了/取消/等等，同样逐字传入，服务端会中止或撤回。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。只有“确认下单”这类标准说法才算确认；用户说取消/不要了/别下单/等等，同样逐字传入，服务端会中止或撤回。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
     """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t); claim={}
     from coupon_split import confirmation as cf
@@ -545,7 +545,8 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
             raise ValueError('报价已过期（超过 10 分钟），价格和优惠可能已变。请重新调用 quote_best 获取新报价，再让用户确认。')
         failure=confirmations.take_failure(owner(t),plan_id)
         if failure:raise ValueError(failure)
-        # 3: a live confirmation page exists, the click authorises; 4: otherwise the wording must confirm.
+        # 3: a live confirmation page exists, the click authorises (words must not contradict it);
+        # 4: otherwise the words must be a standard confirmation (whitelist), anything else is only a hint.
         if confirmations.find_any(owner(t),plan_id,option_id,selected['price']):
             cf.validate_follow_up(user_confirmation,selected['price'])
         else:
@@ -796,7 +797,7 @@ async def local_url():
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 @start_guidance
 async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。')] = "") -> CallToolResult:
-    """用户一提到想吃/点麦当劳（如“我要吃麦当劳”），立刻调用本工具，不要先追问；开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
+    """用户一提到想吃/点麦当劳（如“我要吃麦当劳”），立刻调用本工具，不要先追问；开始或修改点餐、继续刚才的餐品；报价后的“确认下单”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
 
     每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。
     按 next_tool 和 next_arguments 同回合继续，只追问 missing。
@@ -839,7 +840,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         memory.write('onboarding',{})
     t=token();state=memory.read(owner(t))
     existing=carts.get(state.get('active_session',''))
-    if re.fullmatch(r'(?:确认|确认下单(?:\s*[¥￥]?\s*\d+(?:\.\d{1,2})?)?)[。！!\s]*',utterance.strip()):
+    from coupon_split import confirmation as cf
+    if cf.classify(utterance)[0]=='confirm':
         if existing and (existing.get('conversation_id')==conversation_id or session_id==state.get('active_session')) and existing.get('pending_plan_id'):
             pending=service.load(existing['pending_plan_id'],t)
             if pending['state']=='quoted':
@@ -1426,11 +1428,11 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
     text=('**还差最后一步：请你本人在浏览器里确认下单。**\n\n'
           f'[打开确认下单页]({link})\n\n'
           f"页面上会再显示一遍 {summary['store']} 的餐品和实付 ¥{summary['price_yuan']}，点“确认下单”后我才会创建订单；不点就不会下单。"
-          '点完订单立刻创建，不用回来说话；想中止就在这里说“别下单”。')
+          '点完订单立刻创建，不用回来说话。回复“确认下单”才会下单；说“取消”或“不要了”随时撤回。')
     if not summary['real']:text+='\n\n当前为模拟模式，不会产生真实订单。'
     data={'stage':'confirm','state':'confirm_required','plan_id':plan['plan_id'],'confirm_url':link,'next_tool':'place_orders',
           'next_arguments':{k:v for k,v in call_args.items() if v},
-          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。用户点“确认下单”的那一刻订单就会创建，不用再等用户回来说话。不要自己打开、提交或代替用户点这个页面；用户说别下单/不要了/取消/等等，把原话逐字传给 place_orders。'}
+          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。用户点“确认下单”的那一刻订单就会创建，不用再等用户回来说话。不要自己打开、提交或代替用户点这个页面；用户说取消/不要了/别下单/等等，把原话逐字传给 place_orders；只有“确认下单”这类标准说法才算确认。'}
     return result(data,text)
 
 

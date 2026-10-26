@@ -130,43 +130,51 @@ def last_user_message(path):
     return latest
 
 
-# A retraction is never blocked here, the server turns it into a refusal or a withdrawal. The block below is
+# A withdrawal is never blocked here, the server turns it into a refusal or a withdrawal. The block below is
 # byte-identical to coupon_split/confirmation.py (a test keeps them equal).
 # --- negation:begin (hooks/order_context.py carries a byte-identical copy; a test keeps them equal)
-# Judged by meaning, not by the mere presence of a word:
-#  * STRONG phrases are a refusal wherever they stand (别下单 / 不要了 / 先不 / 不确认 ...).
-#  * WEAK words (取消 / 等等 / 想想 / 算了 ...) are a refusal when the message does not open with a confirmation, or when
-#    one of its clauses is nothing but that word ("确认下单，等等" is still "wait"). Negated ("不取消这单"), quoted
-#    ("“取消”按钮我不点") or embedded ("想想没问题") uses inside a confirmation sentence are not.
-STRONG = re.compile(
-    r'先别|别(?:下|买|点|订|了)|不(?:要了|下(?![去来班雨载])|买|订|点了|用了(?!解)|必了|想(?:要|下|买)?了|确认|同意|行|对)|不要[。！!\s]*$|先不|暂时不|暂不'
-    r'|\b(?:no(?!\s*(?:problem|worries))|nope|don\'?t|do\s*not)\b', re.I)
-WEAK_WORDS = ('取消', '撤回', '撤销', '反悔', '改主意', '算了', '等一下', '等一会', '等会', '等等', '稍等', '先等', '别急', '别等', '别动',
-              '停一下', '停下', '再看看', '考虑一下', '想想', 'cancel', 'stop', 'wait', 'never mind', 'nevermind', 'hold on')
-WEAK = re.compile('|'.join(re.escape(w) for w in sorted(WEAK_WORDS, key=len, reverse=True)), re.I)
-NEGATED_WEAK = re.compile(r'(?:不|没|别|无需|不用|不必|不会|不想|不打算|不要|没有|don.?t\s+|do\s+not\s+|not\s+)(?:去|要|想|再|用)?(?:' + WEAK.pattern + ')|(?:' + WEAK.pattern + r')(?:按钮|键|页|选项|功能)', re.I)
-QUOTED = re.compile(r'[“"‘「『《【\[（(][^”"’」』》】\]）)]{1,12}[”"’」』》】\]）)]')
-CONFIRM_LEAD = re.compile(r'^(?:[嗯好对是的那我就请麻烦，, ]*)(?:确认|同意|可以|行|没问题|下单|就这样|ok|yes|confirm|go ahead|proceed)', re.I)
-FILLER = re.compile(r'(?:好吧|我们|让我|帮我|给我|能不能|可不可以|不如|一会儿|会儿|一会|一下|再说|看看|订单|这单|这个|下单|还是|我|先|那|就|请|麻烦|你|嗯|唉|哎|啊|哦|呀|吧|了|呢|吗|单|再|要|想|得|可以)')
-CLAUSES = re.compile(r'(?<!\d)[.](?!\d)|[，,。！!？?；;、\s]+')
+# Whitelist, not guesswork. Decision order, each step final:
+#  1. WITHDRAW: any withdraw / pause word anywhere in the message -> withdraw (even when "确认" is also there).
+#  2. CONFIRM: after normalisation (NFKC, lower case, punctuation and spaces dropped, amount canonical) the message equals
+#     a standard confirmation, with at most a short polite prefix / suffix. Nothing else counts as a confirmation.
+#  3. NONE: anything else -> only a hint, no action.
+import re
+import unicodedata
+from decimal import Decimal
+
+WITHDRAW_ZH = ('取消', '撤回', '撤单', '不要', '别下', '别买', '算了', '先不', '不下了', '不吃了', '退掉', '退单', '等等', '等一下', '再想想', '改一下', '换一下',
+               # supplement to the owner's list (QA 0.7.4 retraction samples that the list alone left unjudged)
+               '撤销', '反悔', '改主意', '停止', '停一下', '稍等', '别急', '先等', '先别')
+WITHDRAW_EN = re.compile(r'(?<![a-z])(?:no|cancel|stop)(?![a-z])')
+CONFIRM_FULL = re.compile(
+    r'(?:好的|好|嗯嗯|嗯|对|是的|ok|okay)*(?:确认下单|确认|同意下单|就这样下单)(?:¥?(\d+(?:\.\d{1,2})?)(?:元|块)?)?(?:谢谢你|谢谢|多谢|谢了|麻烦了|辛苦了|吧)*')
+CONFIRM_HINT = "要下单请直接回复'确认下单'（金额超过 ¥200 时回复'确认下单 ¥X'）。"
+
+
+def normalize(text):
+    """NFKC (full width -> half width), lower case, drop spaces and punctuation but keep the amount's ¥ and decimal point."""
+    text = unicodedata.normalize('NFKC', str(text or '')).lower()
+    text = re.sub(r'[^\w.¥]+|_', '', text)
+    return re.sub(r'(?<!\d)\.|\.(?!\d)', '', text)
+
+
+def classify(text):
+    """('withdraw', None) | ('confirm', cents or None) | ('none', None). When in doubt it is not a confirmation."""
+    raw = unicodedata.normalize('NFKC', str(text or '')).lower()
+    plain = normalize(text)
+    if any(w in plain for w in WITHDRAW_ZH) or WITHDRAW_EN.search(raw):
+        return 'withdraw', None
+    if re.search('[?？]', raw):  # a question is never a confirmation
+        return 'none', None
+    match = CONFIRM_FULL.fullmatch(plain)
+    if not match:
+        return 'none', None
+    return 'confirm', (None if match[1] is None else int((Decimal(match[1]) * 100).to_integral_value()))
 
 
 def is_negative(text):
-    """True when the words refuse, retract or postpone the order. When in doubt, do not order."""
-    text = str(text or '').strip()
-    if not text:
-        return False
-    plain = NEGATED_WEAK.sub(' ', QUOTED.sub(' ', text))
-    if STRONG.search(plain):
-        return True
-    if not WEAK.search(plain):
-        return False
-    if not CONFIRM_LEAD.match(text):
-        return True
-    for clause in CLAUSES.split(plain):
-        if clause and WEAK.search(clause) and not FILLER.sub('', WEAK.sub('#', clause)).strip('#'):
-            return True
-    return False
+    """True when the words withdraw or pause the order."""
+    return classify(text)[0] == 'withdraw'
 # --- negation:end
 
 
@@ -183,12 +191,12 @@ def order_guard(value):
     try:
         try:text=last_user_message(value.get('transcript_path',''))
         except OSError:return ask('读不到对话记录，无法核对你的确认原话。请你本人核对方案和金额后选择是否允许下单。')
-        # Whole-message matching rejects questions, quotes and negated consent.
-        if text and is_negative(text) and value.get('tool_input',{}).get('user_confirmation')==text:
+        # Same classifier as the server: a withdraw word passes (the server withdraws), only a standard confirmation orders.
+        kind,cents=classify(text)
+        if text and kind=='withdraw' and value.get('tool_input',{}).get('user_confirmation')==text:
             return {}
-        normalized=re.sub(r'[。！!，,\s]','',text or '')
-        if not re.fullmatch(r'(?:确认(?:下单)?|同意下单|就这样下单)(?:[¥￥]?\d+\.\d{2})?',normalized):
-            return deny('最后一条用户消息没有明确确认下单，请先展示报价并等待用户确认。')
+        if kind!='confirm':
+            return deny('最后一条用户消息不是标准确认。'+CONFIRM_HINT)
         args=value.get('tool_input',{})
         if args.get('user_confirmation')!=text:
             return deny('确认参数必须逐字等于最后一条用户消息，不能由助手代写。')
@@ -198,10 +206,11 @@ def order_guard(value):
         if not row:return deny('找不到本机报价，请重新报价后确认。')
         plan=json.loads(row[0])
         selected=next(p for p in plan['plans'] if p['option_id']==args.get('option_id','0'))
-        if selected['price']>20000:
-            expected=f"确认下单 ¥{selected['price']/100:.2f}"
-            if text!=expected or args.get('high_amount_confirmation')!=text:
-                return deny('金额超过 ¥200，请用户追加回复：'+expected)
+        expected=f"确认下单 ¥{selected['price']/100:.2f}"
+        if cents is not None and cents!=selected['price']:
+            return deny('确认金额与本次报价不一致，请用户核对后回复：'+expected)
+        if selected['price']>20000 and (cents is None or args.get('high_amount_confirmation')!=text):
+            return deny('金额超过 ¥200，请用户追加回复：'+expected)
     except (OSError,ValueError,KeyError,TypeError,StopIteration,sqlite3.Error):
         return deny('无法核对最后一条用户消息或报价，停止下单；请重新报价并明确确认。')
     return {}

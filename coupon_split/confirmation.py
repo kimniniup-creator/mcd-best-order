@@ -2,8 +2,9 @@
 
 Decision order of place_orders (first match wins; each step is tested):
 
-1. Withdrawal first. If the user's latest words carry a refusal or a retraction
-   (别下 / 不要了 / 取消 / 等等 ...) nothing else is looked at: not an earlier
+1. Withdrawal first. If the user's latest words contain a word of the withdraw / pause list
+   (取消 撤回 撤单 不要 别下 别买 算了 先不 不下了 不吃了 退掉 退单 等等 等一下 再想想 改一下 换一下 no cancel stop) anywhere,
+   nothing else is looked at (a sentence with both such a word and "确认" is a withdrawal): not an earlier
    approval, not a trusted host, not a click.
    a. plan still quoted    -> revoke every live confirmation of this plan, create nothing. This includes a
       click that is being processed (goods being re-checked): its record is revoked atomically, and the last
@@ -15,10 +16,12 @@ Decision order of place_orders (first match wins; each step is tested):
 2. Plan is no longer quoted (the click on the confirmation page already placed
    the order) -> idempotent: return the existing result, wording is not re-checked.
 3. Plan is quoted and a live confirmation exists (link shown, or click being
-   processed) -> the person's click is the authorisation. The wording only has to
-   be neutral: a question, or a different amount, is refused and the page stays valid.
-4. Plan is quoted, no live confirmation -> the wording must be an explicit
-   confirmation of this exact amount, then the person confirms on the host dialog or page.
+   processed) -> the person's click is the authorisation, the words are not. They only must not
+   contradict it: a question, or a standard confirmation of another amount, is refused and the page stays valid.
+4. Plan is quoted, no live confirmation -> the words must equal a standard confirmation of this exact amount
+   (whitelist; anything else is only a hint, nothing happens), then the person confirms on the host dialog or page.
+Whitelist: after normalisation exactly 确认 / 确认下单 / 同意下单 / 就这样下单, optionally followed by the amount, with at
+most a short polite prefix (好的 嗯 对 ...) and suffix (谢谢 吧 ...). Above ¥200 the amount is mandatory.
 
 After the person clicks "确认下单" the order is created at once, by the process that
 serves the page; there is no waiting window in which a later "别下单" could be skipped.
@@ -27,70 +30,75 @@ A "别下单" arriving after that is rule 1b/1c: the order is withdrawn.
 from decimal import Decimal
 import re
 
-AFFIRM = re.compile(r'(?:确认下单|确认|同意下单|就这样下单)(?:\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*元?)?[。！!\s]*')
-
 # --- negation:begin (hooks/order_context.py carries a byte-identical copy; a test keeps them equal)
-# Judged by meaning, not by the mere presence of a word:
-#  * STRONG phrases are a refusal wherever they stand (别下单 / 不要了 / 先不 / 不确认 ...).
-#  * WEAK words (取消 / 等等 / 想想 / 算了 ...) are a refusal when the message does not open with a confirmation, or when
-#    one of its clauses is nothing but that word ("确认下单，等等" is still "wait"). Negated ("不取消这单"), quoted
-#    ("“取消”按钮我不点") or embedded ("想想没问题") uses inside a confirmation sentence are not.
-STRONG = re.compile(
-    r'先别|别(?:下|买|点|订|了)|不(?:要了|下(?![去来班雨载])|买|订|点了|用了(?!解)|必了|想(?:要|下|买)?了|确认|同意|行|对)|不要[。！!\s]*$|先不|暂时不|暂不'
-    r'|\b(?:no(?!\s*(?:problem|worries))|nope|don\'?t|do\s*not)\b', re.I)
-WEAK_WORDS = ('取消', '撤回', '撤销', '反悔', '改主意', '算了', '等一下', '等一会', '等会', '等等', '稍等', '先等', '别急', '别等', '别动',
-              '停一下', '停下', '再看看', '考虑一下', '想想', 'cancel', 'stop', 'wait', 'never mind', 'nevermind', 'hold on')
-WEAK = re.compile('|'.join(re.escape(w) for w in sorted(WEAK_WORDS, key=len, reverse=True)), re.I)
-NEGATED_WEAK = re.compile(r'(?:不|没|别|无需|不用|不必|不会|不想|不打算|不要|没有|don.?t\s+|do\s+not\s+|not\s+)(?:去|要|想|再|用)?(?:' + WEAK.pattern + ')|(?:' + WEAK.pattern + r')(?:按钮|键|页|选项|功能)', re.I)
-QUOTED = re.compile(r'[“"‘「『《【\[（(][^”"’」』》】\]）)]{1,12}[”"’」』》】\]）)]')
-CONFIRM_LEAD = re.compile(r'^(?:[嗯好对是的那我就请麻烦，, ]*)(?:确认|同意|可以|行|没问题|下单|就这样|ok|yes|confirm|go ahead|proceed)', re.I)
-FILLER = re.compile(r'(?:好吧|我们|让我|帮我|给我|能不能|可不可以|不如|一会儿|会儿|一会|一下|再说|看看|订单|这单|这个|下单|还是|我|先|那|就|请|麻烦|你|嗯|唉|哎|啊|哦|呀|吧|了|呢|吗|单|再|要|想|得|可以)')
-CLAUSES = re.compile(r'(?<!\d)[.](?!\d)|[，,。！!？?；;、\s]+')
+# Whitelist, not guesswork. Decision order, each step final:
+#  1. WITHDRAW: any withdraw / pause word anywhere in the message -> withdraw (even when "确认" is also there).
+#  2. CONFIRM: after normalisation (NFKC, lower case, punctuation and spaces dropped, amount canonical) the message equals
+#     a standard confirmation, with at most a short polite prefix / suffix. Nothing else counts as a confirmation.
+#  3. NONE: anything else -> only a hint, no action.
+import re
+import unicodedata
+from decimal import Decimal
+
+WITHDRAW_ZH = ('取消', '撤回', '撤单', '不要', '别下', '别买', '算了', '先不', '不下了', '不吃了', '退掉', '退单', '等等', '等一下', '再想想', '改一下', '换一下',
+               # supplement to the owner's list (QA 0.7.4 retraction samples that the list alone left unjudged)
+               '撤销', '反悔', '改主意', '停止', '停一下', '稍等', '别急', '先等', '先别')
+WITHDRAW_EN = re.compile(r'(?<![a-z])(?:no|cancel|stop)(?![a-z])')
+CONFIRM_FULL = re.compile(
+    r'(?:好的|好|嗯嗯|嗯|对|是的|ok|okay)*(?:确认下单|确认|同意下单|就这样下单)(?:¥?(\d+(?:\.\d{1,2})?)(?:元|块)?)?(?:谢谢你|谢谢|多谢|谢了|麻烦了|辛苦了|吧)*')
+CONFIRM_HINT = "要下单请直接回复'确认下单'（金额超过 ¥200 时回复'确认下单 ¥X'）。"
+
+
+def normalize(text):
+    """NFKC (full width -> half width), lower case, drop spaces and punctuation but keep the amount's ¥ and decimal point."""
+    text = unicodedata.normalize('NFKC', str(text or '')).lower()
+    text = re.sub(r'[^\w.¥]+|_', '', text)
+    return re.sub(r'(?<!\d)\.|\.(?!\d)', '', text)
+
+
+def classify(text):
+    """('withdraw', None) | ('confirm', cents or None) | ('none', None). When in doubt it is not a confirmation."""
+    raw = unicodedata.normalize('NFKC', str(text or '')).lower()
+    plain = normalize(text)
+    if any(w in plain for w in WITHDRAW_ZH) or WITHDRAW_EN.search(raw):
+        return 'withdraw', None
+    if re.search('[?？]', raw):  # a question is never a confirmation
+        return 'none', None
+    match = CONFIRM_FULL.fullmatch(plain)
+    if not match:
+        return 'none', None
+    return 'confirm', (None if match[1] is None else int((Decimal(match[1]) * 100).to_integral_value()))
 
 
 def is_negative(text):
-    """True when the words refuse, retract or postpone the order. When in doubt, do not order."""
-    text = str(text or '').strip()
-    if not text:
-        return False
-    plain = NEGATED_WEAK.sub(' ', QUOTED.sub(' ', text))
-    if STRONG.search(plain):
-        return True
-    if not WEAK.search(plain):
-        return False
-    if not CONFIRM_LEAD.match(text):
-        return True
-    for clause in CLAUSES.split(plain):
-        if clause and WEAK.search(clause) and not FILLER.sub('', WEAK.sub('#', clause)).strip('#'):
-            return True
-    return False
+    """True when the words withdraw or pause the order."""
+    return classify(text)[0] == 'withdraw'
 # --- negation:end
-
-QUESTION = re.compile(r'[?？]\s*$|(?:吗|呢|么)[。！!\s]*$|是不是|多少钱|为什么|怎么|能不能|可不可以')
 
 
 def is_question(text):
-    return bool(QUESTION.search(str(text or '').strip()))
+    return bool(re.search(r'[?？]\s*$|(?:吗|呢|么)[。！!\s]*$|是不是|多少钱|为什么|怎么|能不能|可不可以', str(text or '').strip()))
 
 
 def validate_confirmation(original,price,extra=''):
     expected=f'确认下单 ¥{price/100:.2f}'
+    kind,cents=classify(original)
+    if kind!='confirm':raise ValueError(CONFIRM_HINT)
     if price>20000:
         # Never allow a host-invented auxiliary string to upgrade a bare 确认.
-        if original!=expected or (extra and extra!=original):
-            raise ValueError('金额超过 ¥200，请用户完整回复：'+expected)
-        return
-    match=AFFIRM.fullmatch(original)
-    if not match:raise ValueError('请先在对话中明确确认下单；逐字传用户最后一句原文，例如：'+expected)
-    if match[1] is not None and Decimal(match[1])*100!=price:
+        if cents is None:raise ValueError('金额超过 ¥200，请用户完整回复：'+expected)
+        if cents!=price:raise ValueError('确认金额与本次报价不一致，请用户核对后回复：'+expected)
+    elif cents is not None and cents!=price:
         raise ValueError('确认金额与本次报价不一致，请用户核对后回复：'+expected)
     if extra and extra!=original:raise ValueError('附加确认必须与用户最后一句原文相同')
 
 
 def validate_follow_up(original,price):
-    """Words said while a confirmation page is live: the click decides, the words must not contradict it."""
-    if is_question(original):
-        raise ValueError('用户在提问，还不是确认。先回答问题；确认页仍然有效，用户点“确认下单”才会下单。')
-    match=AFFIRM.fullmatch(str(original or ''))
-    if match and match[1] is not None and Decimal(match[1])*100!=price:
+    """Words said while a confirmation page is live: the click is the authorisation, so the words only must not
+    contradict it. A question is refused, a standard confirmation of another amount is refused (the page stays valid);
+    a withdraw word never gets here (it is handled first). Words alone never create an order."""
+    kind,cents=classify(original)
+    if kind=='none' and is_question(original):
+        raise ValueError('用户在提问，还不是确认。先回答问题；确认页仍然有效，用户点“确认下单”才会下单。'+CONFIRM_HINT)
+    if kind=='confirm' and cents is not None and cents!=price:
         raise ValueError('确认金额与本次报价不一致，请用户核对后回复：'+f'确认下单 ¥{price/100:.2f}')

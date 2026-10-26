@@ -1,4 +1,4 @@
-# 任意 MCP Agent 安装与自检（0.7.4）
+# 任意 MCP Agent 安装与自检（0.7.5）
 
 模型名不等于宿主名：DeepSeek 可以运行在 DSH、Cursor 等不同应用中。先看当前应用、命令或配置界面，再选 host。无需斜杠命令、Skill 或钩子；MCP instructions、工具描述和文本结果自带流程，MCP prompts 的 `order_mcdonalds` 是可选入口。
 
@@ -7,7 +7,7 @@
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.4/coupon_split-0.7.4-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.5/coupon_split-0.7.5-py3-none-any.whl coupon-split
 ```
 
 ```sh
@@ -86,7 +86,7 @@ Cursor/Kiro 可用 `url`，VS Code 可用 `type:http` + `url`，Gemini CLI 的 S
 1. MCP initialize 应有完整 instructions，tools/list 应含点餐和付款工具；支持 prompts 的宿主可读 `order_mcdonalds`，不支持 prompts 仍能工作。
 2. 实际调用 `mcd_start(utterance="我要吃麦当劳")`。未授权只在本机页输入自己的 Token，切勿贴进聊天；已授权会询问点法及缺失要素。
 3. “帮我配”由 Agent 读当前菜单并用 `propose_cart` 校验，主备选经用户认可后才 `quote_best`。“自己点”先把点餐页链接发到可见正文，再 `get_cart` 等待。原样展示方案卡，价格由引擎算。
-4. 报价后结束回合等明确确认。`place_orders.user_confirmation` 逐字复制用户本轮最后一句；金额写错、否定、问题或引用他人的确认都应拒绝。超过 ¥200 要完整原文“确认下单 ¥金额”（两位小数），辅助字段不能替代原文。`place_orders` 可能先返回确认页链接（见上一节“下单前的人工确认”）：原样发给用户，再用同样参数重新调用并等待，绝不自己点。确认后才会建真实待付款单；首次提醒用户，可先模拟。若下单没成功，原样转述麦当劳的原话；状态是核对中就用 `wait_payment` 等结论，不要重新下单。
+4. 报价后结束回合等明确确认。`place_orders.user_confirmation` 逐字复制用户本轮最后一句；只有“确认下单”“确认下单 ¥金额”这类标准说法（可带“好的”“谢谢”）算确认，其他话只提示用户回复“确认下单”；含取消/不要了/别下单/等等等撤回词的话（哪怕同句有“确认”）一律按撤回处理。回复“确认下单”才会下单；说“取消/不要了”随时撤回。金额写错也拒绝。超过 ¥200 要完整原文“确认下单 ¥金额”（两位小数），辅助字段不能替代原文。`place_orders` 可能先返回确认页链接（见上一节“下单前的人工确认”）：原样发给用户，再用同样参数重新调用并等待，绝不自己点。确认后才会建真实待付款单；首次提醒用户，可先模拟。若下单没成功，原样转述麦当劳的原话；状态是核对中就用 `wait_payment` 等结论，不要重新下单。
 5. 原样展示付款卡后循环 `wait_payment`；只读查询不自行下单。模拟模式没有可用支付链接或真实订单；不要拿模拟付款卡冒称真实支付成功。
 
 安装自检不要下单。完整模拟测试须显式设 `COUPON_SPLIT_SIMULATE=true`、`ALLOW_REAL_ORDERS=false`；若宿主会清理环境，将这两个非秘密开关放进本插件配置的 env。仅看到 tools/list 或配置语法正确，只能记为“配置验证”，不能记为“宿主完整实测”。

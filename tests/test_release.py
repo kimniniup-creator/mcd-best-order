@@ -106,7 +106,7 @@ async def test_dialogue_confirmation_required(tmp_path,monkeypatch,confirmation)
     from coupon_split import server as s
     api=Fixture();service=Service(api,str(tmp_path/'plans.db'));p=plan();service.save(p)
     monkeypatch.setattr(s,'service',service);monkeypatch.setattr(s,'UPSTREAM_TOKEN','fixture')
-    with pytest.raises(ValueError,match='明确确认'):await s.place_orders(p['plan_id'],p['confirm_token'],confirmation)
+    with pytest.raises(ValueError,match='确认下单'):await s.place_orders(p['plan_id'],p['confirm_token'],confirmation)
     assert not api.calls
 
 
