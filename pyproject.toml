@@ -1,6 +1,6 @@
 [project]
 name = "coupon-split"
-version = "0.7.5"
+version = "0.7.6"
 requires-python = ">=3.14"
 dependencies = [
     "mcp>=1.28.1,<2",
@@ -12,7 +12,13 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=1", "playwright>=1.55"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "playwright>=1.55",
+    "pypinyin>=0.55.0",
+    "opencc-python-reimplemented>=0.1.7",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

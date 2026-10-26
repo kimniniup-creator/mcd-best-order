@@ -48,6 +48,7 @@ credential = contextvars.ContextVar("credential", default="")
 upstream = Upstream(allow_real=os.environ.get("ALLOW_REAL_ORDERS", "true").lower() == "true" and os.environ.get("COUPON_SPLIT_SIMULATE", "false").lower() != "true")
 service = Service(upstream, str(runtime / "plans.sqlite3"))
 from coupon_split.humanconfirm import ConfirmationStore
+from coupon_split.confirmation import confirm_rule_text
 
 # How long a withdrawal waits for an in-flight create-order to come back before it reports the pending withdrawal.
 WITHDRAW_WAIT = 90
@@ -528,7 +529,7 @@ async def withdraw_order(t, plan, option_id):
 
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。只有“确认下单”这类标准说法才算确认；用户说取消/不要了/别下单/等等，同样逐字传入，服务端会中止或撤回。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户说取消/不要了/别下单/等等，同样逐字传入，服务端会中止或撤回。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
     """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t); claim={}
     from coupon_split import confirmation as cf
@@ -797,7 +798,7 @@ async def local_url():
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 @start_guidance
 async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。')] = "") -> CallToolResult:
-    """用户一提到想吃/点麦当劳（如“我要吃麦当劳”），立刻调用本工具，不要先追问；开始或修改点餐、继续刚才的餐品；报价后的“确认下单”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
+    """用户一提到想吃/点麦当劳（如“我要吃麦当劳”），立刻调用本工具，不要先追问；开始或修改点餐、继续刚才的餐品；报价后的“确认下单”“确认”“同意下单”“就这样下单”（可带金额，如“确认下单 ¥金额”）必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
 
     每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。
     按 next_tool 和 next_arguments 同回合继续，只追问 missing。
@@ -1432,7 +1433,7 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
     if not summary['real']:text+='\n\n当前为模拟模式，不会产生真实订单。'
     data={'stage':'confirm','state':'confirm_required','plan_id':plan['plan_id'],'confirm_url':link,'next_tool':'place_orders',
           'next_arguments':{k:v for k,v in call_args.items() if v},
-          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。用户点“确认下单”的那一刻订单就会创建，不用再等用户回来说话。不要自己打开、提交或代替用户点这个页面；用户说取消/不要了/别下单/等等，把原话逐字传给 place_orders；只有“确认下单”这类标准说法才算确认。'}
+          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。用户点“确认下单”的那一刻订单就会创建，不用再等用户回来说话。不要自己打开、提交或代替用户点这个页面；用户说取消/不要了/别下单/等等，把原话逐字传给 place_orders；'+confirm_rule_text()}
     return result(data,text)
 
 
