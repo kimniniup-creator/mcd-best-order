@@ -15,7 +15,7 @@
 也可自己运行（先预览，核对目标后再加 `--apply`）：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split setup --host cursor
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl coupon-split setup --host cursor
 ```
 
 把 `cursor` 换成 `dsh`、`kiro`、`vscode`、`windsurf`、`cline`、`roo`、`gemini` 或 `claude-desktop`。`setup --detect` 只读探测；`setup --host generic` 给其他宿主标准 MCP 配置；`uninstall --host <name> --apply` 对称移除本条目。详见 [Agent 安装与自检](docs/install-for-agents.md)。无需 Skill 或斜杠命令；本机 HTTP 用 `serve --http`。DeepSeek Harness（dsh）会在 `~/.dsh/profiles/mcd` 建一个独立 profile，默认模拟模式，用 `dsh --profile mcd` 启动；dsh 没有审批弹窗，下单前服务端会给你一个浏览器确认页。
@@ -110,7 +110,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件配置工具权限。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单和撤回仍保留逐次允许；wait_payment 和 pay_card 只读查询无需逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -118,7 +118,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -149,7 +149,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 下单或撤回出了问题，在终端执行下面的命令，导出一份去掉了 Token、完整订单号、券码和付款链接的诊断文件，发给开发（发之前自己打开看一眼，里面应该只有状态、商品码、时间、耗时和麦当劳返回的错误原因）：
 
 ```text
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split diagnose
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl coupon-split diagnose
 ```
 
 文件保存在用户主目录，名为 `mcd-order-diagnosis-<时间>.json`。本机的 `orders.log`（在点餐状态目录里）每次下单、撤回只记录耗时、HTTP 状态、麦当劳的错误码和说明、traceId。
@@ -168,14 +168,14 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.0 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.0)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.1 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.1)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.1/coupon_split-0.7.1-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。

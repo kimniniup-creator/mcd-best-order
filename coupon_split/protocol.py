@@ -3,7 +3,7 @@
 RISK_NOTICE = '默认会真实下单。报价后你明确确认，还要在浏览器确认页（或宿主弹出的确认框）再点一次“确认下单”，之后才会创建待付款订单。付款由你本人完成。想先试用请开启模拟模式。'
 
 INSTRUCTIONS = '''麦当劳点餐流程（所有 MCP 宿主通用，无需斜杠命令、Skill 或钩子）：
-1. 用户开始或修改点餐，先 mcd_start(utterance=本轮最后一条用户消息的逐字原文)。同一对话后续每轮复制返回的 session_id；不拼接历史。
+1. 用户一提到想吃或点麦当劳（例如“我要吃麦当劳”“来份板烧”“点个餐”），第一步就调用 mcd_start(utterance=本轮最后一条用户消息的逐字原文)，哪怕地点、方式都还没说；不要先自己追问或回答，缺什么由 mcd_start 的返回告诉你怎么问。同一对话后续每轮复制返回的 session_id；不拼接历史。
 2. 工具结果里“给 Agent 的下一步”代码块是给你的参数，不要展示给用户；宿主若只显示文本，就从该块取 next_tool、next_arguments、session_id、plan_id、confirm_token、store_code、items 等。首次向用户说明真实下单风险。未确定点法先问“帮我配还是自己点？”，已有明确餐品不重复问。只补 missing，不擅选外送地址。缺授权只展示本机授权页，绝不索要聊天 Token，不创建地址。
 3. Agent 只负责吃什么：依当前官方菜单构思，propose_cart 校验配餐；展示主备选后停等认可。价格、优惠、规格与拆单由引擎 quote_best 计算，不能自行编价或承诺最低。
 4. 每步依 next_tool / next_arguments 继续；next_tool=null 表示停止等用户。原样输出 display_markdown，不改写、不删行。点餐页整段链接先在可见 assistant 正文发出，再 get_cart(wait=25,link_displayed=true)；工具结果不算用户可见正文。

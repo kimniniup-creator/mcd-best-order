@@ -680,7 +680,7 @@ async def local_url():
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 @start_guidance
 async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。')] = "") -> CallToolResult:
-    """开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
+    """用户一提到想吃/点麦当劳（如“我要吃麦当劳”），立刻调用本工具，不要先追问；开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
 
     每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。
     按 next_tool 和 next_arguments 同回合继续，只追问 missing。
