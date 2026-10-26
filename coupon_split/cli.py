@@ -9,7 +9,7 @@ import tomllib
 import sys
 from pathlib import Path
 
-SOURCE='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.2/coupon_split-0.6.2-py3-none-any.whl'
+from coupon_split.hosts import SOURCE
 
 
 def configure_codex(plugin=True):
@@ -79,10 +79,34 @@ def preflight():
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('action',choices=['setup','doctor','forget-credential'])
-    parser.add_argument('--host',choices=['codex-ide','codex-plugin','claude-code'])
+    from coupon_split.hosts import SOURCES, ALIASES, setup, detect
+    parser.add_argument('action',choices=['setup','uninstall','serve','doctor','diagnose','forget-credential'])
+    parser.add_argument('--host',choices=[*SOURCES,*ALIASES])
     parser.add_argument('--apply',action='store_true',help='明确同意写入 MCP 配置和用户 skill')
+    parser.add_argument('--detect',action='store_true',help='只读探测宿主，不写入配置')
+    parser.add_argument('--project',type=Path,help='项目配置的目标工作区，默认当前目录')
+    parser.add_argument('--home',type=Path,help='隔离测试用的宿主 home')
+    parser.add_argument('--config',type=Path,help='显式配置文件路径；扩展版 Cline 请用其界面打开的路径')
+    parser.add_argument('--http',action='store_true',help='启动仅监听本机的 Streamable HTTP 服务')
+    parser.add_argument('--out',type=Path,help='diagnose 导出目录，默认用户主目录')
+    parser.add_argument('--port',type=int,default=0,help='HTTP 端口，默认随机可用端口')
     args=parser.parse_args()
+    if args.action=='serve':
+        if not args.http:parser.error('serve 需要 --http（stdio 请用 coupon-split-mcp）')
+        if not 0<=args.port<=65535:parser.error('端口必须在 0–65535')
+        serve_http(args.port)
+        return
+    if args.detect:
+        if args.action!='setup':parser.error('--detect 只用于 setup')
+        print(json.dumps(detect(args.project,args.home),ensure_ascii=False,indent=2))
+        return
+    if args.action=='diagnose':
+        from coupon_split.diagnostics import export
+        from coupon_split.local import state_dir
+        target=export(state_dir(),args.out)
+        print('已导出（不含 Token、完整订单号、券码、付款链接）：'+str(target))
+        print('发给开发前请先打开看一眼：里面应该只有状态、商品码、时间、耗时和麦当劳返回的错误原因。')
+        return
     if args.action=='doctor':
         preflight()
         return
@@ -97,57 +121,29 @@ def main():
         if file.exists():file.unlink()
         print('本机麦当劳凭据已清除。')
         return
-    if not args.host:parser.error('setup 需要 --host')
-    if args.host=='codex-plugin':
-        if not args.apply:raise SystemExit('需 --apply 同意：仅配置本插件报价自动通过及写工具审批。')
-        configure_codex()
-        preflight()
-        return
-    if args.host=='claude-code':
-        raise SystemExit('Claude 请用插件安装：/plugin marketplace add kimniniup-creator/mcd-best-order，然后 /plugin install mcd-best-order@mcd-best-order-marketplace')
-    if args.host=='codex-ide':
-        launcher=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))/'hooks/launch.sh'
-        command=['codex','mcp','add','coupon-split','--','sh',str(launcher),'server']
-        target=Path.home()/'.agents/skills/mcd-order/SKILL.md'
-    else:
-        command=['claude','mcp','add','--scope','user','coupon-split','--','uvx','--from',SOURCE,'coupon-split-mcp']
-        target=Path.home()/'.claude/skills/mcd-order/SKILL.md'
-    print('将写入本人Claude Code/Codex MCP 配置，并安装 skill：',target)
-    print(subprocess.list2cmdline(command))
-    if not args.apply:
-        print('尚未修改配置。确认这些改动后，添加 --apply 重新运行。')
-        return
-    source=Path(__file__).parent/'assets/skills/mcd-order/SKILL.md'
-    if not source.exists():source=Path(__file__).parent.parent/'skills/mcd-order/SKILL.md'
-    if target.exists() and target.read_bytes()!=source.read_bytes():
-        raise SystemExit('已有不同版本 skill，保留原文件；请先自行核对版本。')
-    executable=shutil.which(command[0])
-    if not executable:raise SystemExit('未找到Claude Code/Codex命令，请先安装Claude Code/Codex CLI。')
-    if args.host=='codex-ide':
-        launcher.parent.mkdir(parents=True,exist_ok=True)
-        source_launcher=Path(__file__).parent/'assets/hooks/launch.sh'
-        if not source_launcher.exists():source_launcher=Path(__file__).parent.parent/'hooks/launch.sh'
-        shutil.copyfile(source_launcher,launcher)
-        # Keep the bundled relative hooks directory for the fast discovery proxy.
-        shutil.copytree(source_launcher.parent,launcher.parent,dirs_exist_ok=True)
-    subprocess.run([executable,*command[1:]],check=True)
-    target.parent.mkdir(parents=True,exist_ok=True)
-    shutil.copyfile(source,target)
-    if args.host=='codex-ide':
-        # Server-scoped readiness and auth forwarding; never alter other MCPs.
-        path=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))/'config.toml'
-        text=path.read_text(encoding='utf-8')
-        header='[mcp_servers.coupon-split]'
-        block='required = false\nstartup_timeout_sec = 120\nenv_vars = ["MCD_MCP_TOKEN", "COUPON_SPLIT_HOME", "ALLOW_REAL_ORDERS", "COUPON_SPLIT_SIMULATE", "UV_CACHE_DIR", "PYTHON_KEYRING_BACKEND"]\n'
-        # codex mcp add just created this section; remove only owned settings
-        # so repeated setup remains valid TOML and keeps existing credentials.
-        sections=[]
-        for section in re.split(r'(?=^\[)',text,flags=re.M):
-            if section.splitlines() and section.splitlines()[0].strip()==header:
-                section=re.sub(r'^(?:required|startup_timeout_sec|env_vars)\s*=.*\n?', '', section,flags=re.M)
-                section=section.replace(header,header+'\n'+block,1)
-            sections.append(section)
-        text=''.join(sections);tomllib.loads(text);path.write_text(text,encoding='utf-8')
-        configure_codex(plugin=False)
-        preflight()
-    print('完成。请新开Claude Code/Codex会话，说出想吃的餐品。')
+    if not args.host:parser.error('setup/uninstall 需要 --host')
+    try:
+        setup(ALIASES.get(args.host,args.host),args.apply,args.action=='uninstall',args.project,args.home,args.config)
+    except (ValueError,OSError) as exc:
+        raise SystemExit('未修改配置：'+str(exc)) from None
+    return
+
+
+def serve_http(port=0):
+    """Bind before advertising the endpoint; only a local bearer can use MCP."""
+    import socket
+    import uvicorn
+    os.environ['COUPON_SPLIT_HTTP']='1'
+    from coupon_split.server import app, LOCAL_KEY
+    sock=socket.socket()
+    sock.bind(('127.0.0.1',port))
+    sock.listen(128)
+    actual=sock.getsockname()[1]
+    print(json.dumps({'transport':'streamable-http','url':f'http://127.0.0.1:{actual}/mcp',
+                      'headers':{'Authorization':'Bearer '+LOCAL_KEY}},ensure_ascii=False),flush=True)
+    print('仅本机可用；访问令牌不要发到聊天或提交到仓库。SSE-only 宿主需使用兼容桥接，不能把 /mcp 当作旧版 /sse。',file=sys.stderr)
+    try:uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=actual,access_log=False,log_level='warning')).run(sockets=[sock])
+    finally:sock.close()
+
+
+if __name__=='__main__':main()

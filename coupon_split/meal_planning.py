@@ -171,7 +171,9 @@ async def simple(s, store_code, people, elements):
             if role(row)!='分享餐' or not available(row):continue
             detail=(await s.upstream.call(s.token(),'query-meal-detail',dict(base,code=row['productCode'])))['data']
             details[row['productCode']]=detail
-            selected=[c for r in detail.get('rounds',[]) for c in r['choices'] if c.get('isDefault') and c.get('quantity',0)>0]
+            from coupon_split.menu import default_choices
+            by_code={str(c['code']):c for r in detail.get('rounds',[]) for c in r['choices']}
+            selected=[dict(by_code[p['code']],quantity=p['quantity']) for r in detail.get('rounds',[]) for p in default_choices(r) if p['code'] in by_code]
             coverage={k:sum(c['quantity'] for c in selected if role(c)==k) for k in ('主食','小食','饮料')}
             if selected and all(role(c) in coverage for c in selected):row['servingsByRole']=coverage
     selected=[]

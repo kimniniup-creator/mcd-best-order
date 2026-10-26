@@ -36,7 +36,7 @@ if (Path(__file__).resolve().parent/"assets/web").exists():
     ROOT=Path(__file__).resolve().parent/"assets"
 load_dotenv(ROOT.parent / ".secrets" / "mcd-mcp.env")
 load_dotenv(ROOT / ".env")
-runtime = state_dir() if os.environ.get("COUPON_SPLIT_STDIO") else ROOT / ".runtime"
+runtime = state_dir() if os.environ.get("COUPON_SPLIT_STDIO") or os.environ.get('COUPON_SPLIT_HTTP') else ROOT / ".runtime"
 runtime.mkdir(exist_ok=True)
 access_file = runtime / "access.key"
 if not access_file.exists():
@@ -47,11 +47,19 @@ request_base = contextvars.ContextVar("request_base",default="")
 credential = contextvars.ContextVar("credential", default="")
 upstream = Upstream(allow_real=os.environ.get("ALLOW_REAL_ORDERS", "true").lower() == "true" and os.environ.get("COUPON_SPLIT_SIMULATE", "false").lower() != "true")
 service = Service(upstream, str(runtime / "plans.sqlite3"))
+from coupon_split.humanconfirm import ConfirmationStore
+confirmations = ConfirmationStore(runtime / "confirmations.sqlite3")
 active_credentials = {}  # memory only; local default is recovered on restart
 conversation_id = secrets.token_urlsafe(24)
 store_context = {}
 menu_context = {}
-mcp = FastMCP("最优下单", instructions="用户看不到工具结果。点餐页链接必须先原样写进用户可见的 assistant 正文，再调用 get_cart，禁止只有工具调用。开始或修改点餐（包括只说单个餐品）先调用 mcd_start(utterance=用户原话)，不能跳过起步直接查地址、菜单或报价。用户说了餐品就沿用 session 的 items，不再问推荐；仅补缺的方式和地点，不能擅选外送地址。报价后的确认必须直接调用 place_orders，绝不调用 mcd_start；其余后续点餐原话先调用 mcd_start(utterance=完整原话)，服务端保留当前会话。用户说“好了”也调用 mcd_start 恢复购物车。严格依 next_tool、display_markdown、reply_options 继续。原样输出 display_markdown，不得改写或删行。先把 display_markdown 中含 [打开点餐页] 链接的整段话原样输出给用户，再调用 get_cart(wait=25) 轮询提交，自动报价；不输出英文元话或内部说明。报价后结束回合等明确确认，禁止自主下单；收到用户明确确认且Claude Code/Codex 允许弹窗通过后才能下单。", stateless_http=True, json_response=True)
+from coupon_split.protocol import INSTRUCTIONS, FLOW, RISK_NOTICE
+mcp = FastMCP("最优下单", instructions=INSTRUCTIONS, stateless_http=True, json_response=True)
+
+
+@mcp.prompt(description='麦当劳点餐：按用户原话起步，报价后等待确认，再展示付款卡。无需 Skill。')
+def order_mcdonalds(utterance: str = '我要吃麦当劳') -> str:
+    return INSTRUCTIONS+'\n用户点餐原话：'+utterance+'\n现在调用 mcd_start，后续按返回的 next_tool 继续。'
 
 
 def token():
@@ -62,15 +70,78 @@ def token():
     return value
 
 
+AGENT_SKIP = {'markdown','display_markdown','say_hint','before_next_tool','ordering_protocol','comparison_summary','orders','evidence',
+              'plans','elements','coverage','extras','headline','workflow','risk_notice','inferred_sources','no_card','stores','last_search',
+              'links','confirmation_instruction','next_action','pending_cart_notice','owner'}
+
+
+def complete_next_arguments(data):
+    """Fill the parameters the next tool needs, so a host that reads either side can continue."""
+    if data.get('next_arguments') or not data.get('next_tool'):
+        return data
+    tool=data['next_tool']
+    store=data.get('store_code') or data.get('storeCode') or (data.get('default_store') or {}).get('storeCode')
+    if store and not data.get('store_code'):data['store_code']=store
+    if tool=='quote_best' and store:
+        items=data.get('items') or data.get('selected_items')
+        if items:data['next_arguments']={'store_code':store,'items':items}
+    elif tool=='get_cart' and data.get('session_id'):
+        data['next_arguments']={'session_id':data['session_id'],'link_displayed':True,'wait':data.get('wait',25)}
+    elif tool=='wait_payment' and data.get('plan_id'):
+        data['next_arguments']={'plan_id':data['plan_id'],'timeout':60}
+    return data
+
+
+def agent_block(data):
+    """Machine-readable next step for hosts that show the model only content[].text (DeepSeek Harness)."""
+    view={}
+    for key,value in data.items():
+        if key in AGENT_SKIP or value in (None,'',[],{}) and key!='next_tool':continue
+        if len(json.dumps(value,ensure_ascii=False,separators=(',',':')))>3500 and key not in {'items','selected_items'}:continue
+        view[key]=value
+    return ('---\n【给 Agent 的下一步（用户看不到这一块，不要展示、复述或改写给用户）】\n'
+            '宿主若只显示文本，就从下面的代码块取参数；next_tool 为 null 表示本回合停止，等用户说话。\n'
+            '下一步调用：\n```json\n'+json.dumps(view,ensure_ascii=False,separators=(',',':'))+'\n```')
+
+
 def result(data, text):
+    data=dict(data)
+    data.setdefault('next_tool',None)
+    complete_next_arguments(data)
+    # Some MCP clients (including DSH) project only content[].text to the model, others only
+    # structuredContent. Every routing parameter is written to both (see agent_block).
     if data.get('picker_url'):
         data=dict(data,next_action='先发送可见 assistant 正文，再调用 get_cart(wait=25)',
                   before_next_tool='display_markdown 必须已经在 assistant 正文输出；工具结果不算输出。')
+    stage=data.get('stage',{'quoted':'quote','awaiting_payment':'placed'}.get(data.get('state'),'pick'))
+    transport=agent_block(dict(data,stage=stage))
     data = dict(data, markdown=text, display_markdown=text,
                 stage=data.get('stage',{'quoted':'quote','awaiting_payment':'placed'}.get(data.get('state'),'pick')),
                 say_hint=('先把 display_markdown 中含 [打开点餐页] 的整段话原样输出给用户，再调用 get_cart(wait=25)。链接只发一次；超时继续等待，不催开页。' if data.get('picker_url') else '原样输出 display_markdown，不得改写或删行；包括账户、餐具、时间、用券、规格和覆盖行。'),
                 reply_options=data.get('reply_options', []), links=data.get('links', {}))
-    return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=data)
+    return CallToolResult(content=[TextContent(type="text", text=text),TextContent(type='text',text=transport)], structuredContent=data)
+
+
+def start_guidance(fn):
+    from functools import wraps
+    @wraps(fn)
+    async def wrapped(*args,**kwargs):
+        response=await fn(*args,**kwargs)
+        data=response.structuredContent
+        data['workflow']=FLOW
+        notice_key='risk-notice-'+owner(credential.get() or UPSTREAM_TOKEN or 'unauthorized')
+        if not memory.read(notice_key).get('shown'):
+            old_text=data['display_markdown']
+            text=RISK_NOTICE+'\n\n'+old_text
+            data.update(markdown=text,display_markdown=text,risk_notice=RISK_NOTICE)
+            for n,block in enumerate(response.content):
+                if isinstance(block,TextContent) and block.text==old_text:
+                    response.content[n]=TextContent(type='text',text=text)
+                    break
+            memory.write(notice_key,{'shown':True})
+        response.content.append(TextContent(type='text',text='点餐流程（宿主执行，不要展示）：'+json.dumps(FLOW,ensure_ascii=False,separators=(',',':'))))
+        return response
+    return wrapped
 
 
 def start_form_schema(schema):
@@ -352,17 +423,16 @@ async def get_evidence(plan_id: str, evidence_id: str) -> CallToolResult:
 
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: str, option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "") -> CallToolResult:
-    """仅逐字收到用户明确确认且Claude Code/Codex 允许弹窗通过后调用。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+    """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t)
     import re
-    if not re.search(r'确认|同意下单|就这样下单',user_confirmation) or re.search(r'不|别|不要|取消|撤回|先等',user_confirmation):
-        raise ValueError('请先在对话中明确确认下单')
     selected=next(p for p in plan['plans'] if p['option_id']==option_id)
-    if selected['price']>20000:
-        expected=f"确认下单 ¥{selected['price']/100:.2f}"
-        if high_amount_confirmation!=expected:
-            raise ValueError('金额超过 ¥200，请用户追加回复：'+expected)
+    from coupon_split.confirmation import validate_confirmation
+    # After the confirmation link was issued, the follow-up call carries whatever the user said last
+    # ("好了"); the wording was validated when the link was issued and the click is what counts now.
+    if not (plan['state']=='quoted' and confirmations.find_any(owner(t),plan_id,option_id,selected['price'])):
+        validate_confirmation(user_confirmation,selected['price'],high_amount_confirmation)
     if take_way:
         import hmac
         if not hmac.compare_digest(confirm_token,plan['confirm_token']):raise ValueError('确认凭证不匹配')
@@ -375,6 +445,9 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: str,
     service.validate_before_place(plan,selected)
     for order in selected['orders']:
         await validate_selected(t,plan['storeCode'],order['request']['items'],order['request'],fill_defaults=False)
+    if plan['state']=='quoted':
+        pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation))
+        if pending is not None:return pending
     plan = await service.place(t,plan_id,confirm_token,option_id)
     await attach_payment_url(plan)
     if plan.get('orders'):
@@ -385,6 +458,10 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: str,
         memory.write(owner(t),state)
     data=public(plan)
     if plan.get('dry_run'):data.update(next_tool=None,payment_wait_skipped=True)
+    if plan['state']=='verifying':
+        data.update(next_tool='wait_payment',next_arguments={'plan_id':plan_id,'timeout':60},
+                    before_next_tool='先在可见正文原样输出 display_markdown，再调用 wait_payment 等核对结论；期间不要重新下单。')
+    if plan['state']=='place_failed':data.update(next_tool=None)
     if plan['state']=='awaiting_payment' and not plan.get('dry_run'):
         data.update(next_tool='wait_payment',next_arguments={'plan_id':plan_id,'timeout':60},
                     before_next_tool='先在可见正文原样输出 display_markdown 付款卡，再循环 wait_payment；已付款后告知真实取餐码和门店。')
@@ -415,9 +492,12 @@ async def wait_payment(plan_id: str, timeout: Annotated[int, Field(ge=0,le=60)] 
     plan=await service.wait_payment(token(),plan_id,timeout)
     if plan.get('payment_key'):plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
     from coupon_split.payment import payment_message
-    text=('还没付款。\n' if plan['state']=='awaiting_payment' else '')+payment_message(plan)
+    if plan['state'] in {'verifying','place_failed'}:
+        from coupon_split.presentation import markdown as card
+        text=card(plan)
+    else:text=('还没付款。\n' if plan['state']=='awaiting_payment' else '')+payment_message(plan)
     codes=[str(o[k]) for o in plan.get('orders',[]) for k in ('takeCode','pickupCode','orderCode','mealCode') if o.get(k)]
-    return result(dict(public(plan),next_tool='wait_payment' if plan['state']=='awaiting_payment' and not plan.get('dry_run') else '',pickup_codes=list(dict.fromkeys(codes))),text)
+    return result(dict(public(plan),next_tool='wait_payment' if plan['state'] in {'awaiting_payment','verifying'} and not plan.get('dry_run') else '',pickup_codes=list(dict.fromkeys(codes))),text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
@@ -478,7 +558,8 @@ async def validate_selected(t, store, items, context, fill_defaults=False):
         rounds={str(r["id"]):r for r in detail.get("rounds",[])}
         defaulted=False
         if fill_defaults and rounds and not item.get('roundList'):
-            item['roundList']=[{'round':str(r['id']),'comboItemList':[{'code':c['code'],'quantity':c.get('quantity',1)} for c in r['choices'] if c.get('isDefault') and c.get('quantity',1)>0]} for r in detail['rounds']]
+            from coupon_split.menu import default_choices
+            item['roundList']=[{'round':str(r['id']),'comboItemList':default_choices(r)} for r in detail['rounds']]
             defaulted=True
         chosen=item.get("roundList",[])
         if len(chosen)!=len(rounds) or len({r["round"] for r in chosen})!=len(chosen):
@@ -597,6 +678,7 @@ async def local_url():
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
+@start_guidance
 async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。')] = "") -> CallToolResult:
     """开始或修改点餐、继续刚才的餐品；报价后的“确认”“确认下单 ¥金额”必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。
 
@@ -605,7 +687,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，
     再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。
     收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。
-    报价完整展示后停等明确确认；place_orders 还须Claude Code/Codex 允许弹窗，不得自主下单。
+    报价完整展示后停等明确确认；place_orders 逐字传用户最后一句，宿主有审批时仍须允许，不得自主下单。
     缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。
     """
     import re
@@ -846,7 +928,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         notice='上次有一份没下单的（'+summary+'），要接着用吗？说“继续刚才”即可恢复。'
         data['pending_cart_notice']=notice
         text+='\n\n'+notice
-    data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待明确确认和Claude Code/Codex 允许弹窗。全程中文，不对用户说英文元话。'
+    data['ordering_protocol']='无需读取本地技能文件；按 next_tool 和 missing 继续。完整原样展示 display_markdown；每回合只展示一次点餐页链接后 get_cart(wait=25,link_displayed=true)。submitted 后 quote_best；报价后等待用户明确确认，逐字传最后一句；宿主有审批时还须允许。全程中文，不对用户说英文元话。'
     carts[sid]=cart
     response=result(data,text)
     response.content.insert(0,TextContent(type='text',text='宿主执行指令：本回合按 next_tool 继续；需要等用户补充时停止。下一条用户消息调用 mcd_start 必须带 session_id='+sid+'，utterance 只传下一条原话。不可省略 session_id；人数/预算/忌口由本会话自动保留。'))
@@ -883,9 +965,12 @@ async def get_cart(session_id: str, wait: int = 0, link_displayed: bool = False)
         return response
     until=time.monotonic()+min(max(wait,0),25)
     cart['waiter_until']=until
+    from coupon_split.connection import heartbeat
+    heartbeat(cart)
     while not cart["submitted"] and time.monotonic()<until:
         await asyncio.sleep(.25)
         cart=owned_cart(session_id)
+        heartbeat(cart)
     if cart['submitted']:cart['received']=True
     elif cart.get('store_code') and not cart.get('page_opened'):
         # A successful empty poll can hide an omitted link indefinitely. Repeat
@@ -894,7 +979,7 @@ async def get_cart(session_id: str, wait: int = 0, link_displayed: bool = False)
             cart['handoff_checked']=False
             carts[session_id]=cart
             return await get_cart(session_id,wait=0,link_displayed=False)
-    return result({**{k:v for k,v in cart.items() if k not in {'owner','waiter_until'}},'next_tool':'quote_best' if cart['submitted'] else 'get_cart','wait':25},'收到：已按你选的规格取回餐品，正在算最省的下法……' if cart['submitted'] else '等你在页面里选好，选好会自动交回。')
+    return result({**{k:v for k,v in cart.items() if k not in {'owner','waiter_until','wait_heartbeat'}},'next_tool':'quote_best' if cart['submitted'] else 'get_cart','wait':25},'收到：已按你选的规格取回餐品，正在算最省的下法……' if cart['submitted'] else '等你在页面里选好，选好会自动交回。')
 
 
 @mcp.tool(name='get_cart',annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
@@ -998,14 +1083,16 @@ async def cart_state(request):
         try:elements=normalize_elements(data.get('elements',{}))
         except ValueError as exc:return JSONResponse({'error':str(exc)},status_code=400)
         cart.update(elements=elements,store_code=data.get('store_code'),submitted=False)
+    from coupon_split.connection import connection
+    if b'lite=1' in request.scope.get('query_string',b''):return JSONResponse(connection(cart),headers={'Cache-Control':'no-store'})
     state=memory.read(cart['owner'])
-    return JSONResponse({**{k:v for k,v in cart.items() if k!='owner'},'last_search':dict(state.get('last_search',{}),city=cart.get('city') or state.get('last_search',{}).get('city','')),'stores':list(state.get('stores',{}).values())},headers={'Cache-Control':'no-store'})
+    return JSONResponse({**{k:v for k,v in cart.items() if k not in {'owner','wait_heartbeat'}},**connection(cart),'last_search':dict(state.get('last_search',{}),city=cart.get('city') or state.get('last_search',{}).get('city','')),'stores':list(state.get('stores',{}).values())},headers={'Cache-Control':'no-store'})
 
 
 async def order_page(request):
     sid=request.path_params['session_id']; cart=carts.get(sid)
     if not cart:
-        if request.method=='GET':return HTMLResponse('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>点餐链接已失效</title><main style="max-width:36rem;margin:12vh auto;padding:24px;font:18px/1.8 system-ui"><h1>这个点餐链接已失效</h1><p>链接可能已过期，或点餐服务已经结束。请回到 Claude Code 或 Codex，说“我自己点”获取新链接。</p></main></html>',status_code=404,headers={'Cache-Control':'no-store'})
+        if request.method=='GET':return HTMLResponse('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>点餐链接已失效</title><main style="max-width:36rem;margin:12vh auto;padding:24px;font:18px/1.8 system-ui"><h1>这个点餐链接已失效</h1><p>链接可能已过期，或点餐服务已经结束。请回到你的 Agent，说“我自己点”获取新链接。</p></main></html>',status_code=404,headers={'Cache-Control':'no-store'})
         return JSONResponse({'error':'点餐链接已失效，请回到对话重新点餐。'},status_code=404)
     if request.method=='POST':
         if request.headers.get('origin')!='http://'+request.headers.get('host',''):
@@ -1083,7 +1170,10 @@ class Auth:
         origin = headers.get(b"origin", b"").decode()
         if origin and origin not in {"http://"+headers.get(b"host",b"").decode()}:
             return await JSONResponse({"error":"origin forbidden"},403)(scope,receive,send)
-        if not supplied or (supplied == LOCAL_KEY and not UPSTREAM_TOKEN):
+        strict_local=bool(os.environ.get('COUPON_SPLIT_HTTP'))
+        if strict_local and (not supplied or not secrets.compare_digest(supplied,LOCAL_KEY)):
+            return await JSONResponse({'error':'需要本机服务访问令牌'},401)(scope,receive,send)
+        if not supplied or (supplied == LOCAL_KEY and not UPSTREAM_TOKEN and not strict_local):
             return await JSONResponse({"error":"需要账户 Token；本机请配置 MCD_MCP_TOKEN"},401)(scope,receive,send)
         if from_cookie and supplied not in carts:
             return await JSONResponse({'error':'点餐页已过期，请回到对话重新开始'},401)(scope,receive,send)
@@ -1126,7 +1216,7 @@ async def sweep():
         for account,body in rows:
             plan = json.loads(body)
             t = active_credentials.get(account) or (UPSTREAM_TOKEN if account == owner(UPSTREAM_TOKEN) else None)
-            if t and plan["state"] in {"placing","awaiting_payment","rollback_pending","awaiting_coupon_return"}:
+            if t and plan["state"] in {"placing","verifying","awaiting_payment","rollback_pending","awaiting_coupon_return"}:
                 try:
                     await service.status(t,plan["plan_id"])
                 except Exception:
@@ -1147,6 +1237,85 @@ async def favicon(request):
     return FileResponse(ROOT/"web/favicon.svg")
 
 
+async def human_confirmation(ctx, t, plan, selected, option_id, call_args):
+    """Server-side, human-completed confirmation. None means: go ahead and place the order.
+
+    Order: host that provably asks the person (Claude Code) -> MCP elicitation -> local page.
+    Over a direct Python call (no MCP session, tests) the caller already is the process.
+    """
+    from coupon_split import humanconfirm as hc
+    if ctx is None or hc.trusted_host(ctx):
+        return None
+    take=(plan.get('order_elements') or {}).get('takeWayCode','')
+    price=selected['price']
+    account=owner(t)
+    record=confirmations.find(account,plan['plan_id'],option_id,take,price)
+    if record and record['state']=='approved':
+        confirmations.set_state(record['key'],'used',only_from=('approved',))
+        return None
+    if record and record['state']=='declined':
+        raise ValueError('你在确认页选择了先不下单，订单没有创建。想下单请重新说“确认”。')
+    summary=hc.order_summary(plan,selected,take)
+    if record is None and hc.supports_elicitation(ctx):
+        from pydantic import BaseModel
+        class Confirm(BaseModel):
+            confirm: bool = Field(description='确认下单')
+        try:
+            answer=await asyncio.wait_for(ctx.elicit(hc.elicitation_message(summary),Confirm),55)
+        except Exception:
+            answer=None
+        if answer is not None and answer.action=='accept' and getattr(answer.data,'confirm',False):return None
+        # Declined, dismissed or unanswered (some hosts auto-decline without a UI): nothing is created;
+        # the person can still confirm on the page, or simply not click.
+    first=record is None
+    if first:
+        record=confirmations.create(account,plan['plan_id'],option_id,take,price,summary)
+    else:
+        # Called again after the link was shown: wait for the person's click.
+        until=time.monotonic()+float(os.environ.get('COUPON_SPLIT_CONFIRM_WAIT','50'))
+        while time.monotonic()<until:
+            current=confirmations.get(record['key'])
+            if current['state']=='approved':
+                confirmations.set_state(current['key'],'used',only_from=('approved',))
+                return None
+            if current['state'] in {'declined','expired'}:
+                raise ValueError('你在确认页选择了先不下单，订单没有创建。' if current['state']=='declined' else '确认已过期，请重新说“确认”。')
+            await asyncio.sleep(.5)
+    link=(await local_url())+'/confirm/'+record['key']
+    text=('**还差最后一步：请你本人在浏览器里确认下单。**\n\n'
+          f'[打开确认下单页]({link})\n\n'
+          f"页面上会再显示一遍 {summary['store']} 的餐品和实付 ¥{summary['price_yuan']}，点“确认下单”后我才会创建订单；不点就不会下单。"
+          '点完回到这里说一声“好了”。')
+    if not summary['real']:text+='\n\n当前为模拟模式，不会产生真实订单。'
+    data={'stage':'confirm','state':'confirm_required','plan_id':plan['plan_id'],'confirm_url':link,'next_tool':'place_orders',
+          'next_arguments':{k:v for k,v in call_args.items() if v},
+          'before_next_tool':'先把 display_markdown 里的确认链接原样写进可见正文，再用同样的参数调用 place_orders 等用户点击（最多等约 50 秒，超时会再给同一个链接）。不要自己打开、提交或代替用户点这个页面。'}
+    return result(data,text)
+
+
+async def confirm_page(request):
+    key=request.path_params['key']
+    record=confirmations.get(key)
+    headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
+    if not record:return JSONResponse({'error':'这个确认链接已失效，请回到对话重新确认。'},status_code=404,headers=headers)
+    path=request.url.path
+    if request.method=='POST':
+        origin=request.headers.get('origin','')
+        site=request.headers.get('sec-fetch-site','same-origin')
+        if origin!='http://'+request.headers.get('host','') or site not in {'same-origin','none'}:
+            return JSONResponse({'error':'只能在确认页上点击'},status_code=403,headers=headers)
+        state='approved' if path.endswith('/approve') else 'declined'
+        if state=='approved':
+            plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans WHERE id=?',(record['plan_id'],))),None)
+            if not plan or plan['state']!='quoted':
+                return JSONResponse({'error':'这份报价已经处理过或已失效'},status_code=409,headers=headers)
+        record=confirmations.set_state(key,state)
+        return JSONResponse({'state':record['state']},headers=headers)
+    if path.endswith('/state'):
+        return JSONResponse({'state':record['state'],'summary':record['summary']},headers=headers)
+    return FileResponse(ROOT/'web/confirm.html',headers=headers)
+
+
 async def payment_page(request):
     key=request.path_params['payment_key']
     # An unguessable, plan-specific read capability; never accept a raw plan ID.
@@ -1162,7 +1331,7 @@ async def payment_page(request):
     return JSONResponse(payment_state(plan,request.headers.get('user-agent','')),headers=headers)
 
 
-app = Auth(Starlette(routes=[Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
+app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
 
 if __name__ == "__main__":
     import uvicorn

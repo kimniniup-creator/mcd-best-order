@@ -1,17 +1,29 @@
 # 麦当劳点餐助手
 
-在 Claude Code 或 Codex 里查门店、选餐、比较同规格价格，用你自己的麦当劳账户点餐。
+支持任何能接 MCP 的 Agent，Claude Code 和 Codex 有一键安装。查门店、选餐、比较同规格价格，用你自己的麦当劳账户点餐。
 
 安装：先准备下面的条件，再复制对应的 Claude 两行或 Codex 三段命令。
 
 装好后说：**我要吃麦当劳**
 
-**默认会真实下单，需要你在对话里说“确认”，Claude Code 或 Codex 弹窗时点允许。** 报价后不会自动下单。想先试用，装好后、启动程序前开启[模拟模式](#先试用模拟模式)。
+**默认会真实下单。报价后要你明确确认；宿主有审批弹窗时还需点允许。部分宿主没有弹窗，确认后会直接创建待付款订单。** 服务端核对确认原文与金额，付款由你本人完成。想先试用，装好后、启动程序前开启[模拟模式](#先试用模拟模式)。
+
+## 其他 Agent（Cursor / Kiro / DeepSeek Harness……）
+
+对你的 Agent 说：**“按 https://github.com/kimniniup-creator/mcd-best-order 的 AGENTS.md 帮我安装。”**
+
+也可自己运行（先预览，核对目标后再加 `--apply`）：
+
+```sh
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split setup --host cursor
+```
+
+把 `cursor` 换成 `dsh`、`kiro`、`vscode`、`windsurf`、`cline`、`roo`、`gemini` 或 `claude-desktop`。`setup --detect` 只读探测；`setup --host generic` 给其他宿主标准 MCP 配置；`uninstall --host <name> --apply` 对称移除本条目。详见 [Agent 安装与自检](docs/install-for-agents.md)。无需 Skill 或斜杠命令；本机 HTTP 用 `serve --http`。DeepSeek Harness（dsh）会在 `~/.dsh/profiles/mcd` 建一个独立 profile，默认模拟模式，用 `dsh --profile mcd` 启动；dsh 没有审批弹窗，下单前服务端会给你一个浏览器确认页。
 
 ## 安装前准备
 
 - 有自己的麦当劳账户。首次使用需要到[麦当劳开放平台](https://open.mcd.cn/mcp)，用手机验证码登录并获取 Token，大约 2 分钟；随后粘贴到本机授权页，别发进聊天。
-- 已安装并登录 Claude Code 或支持 `codex plugin` 命令的 Codex。
+- 已安装并登录能接 MCP 的 Agent。使用下方插件安装时需 Claude Code 或支持 `codex plugin` 的 Codex。
 - 已安装 uv。无需另装 Python，uv 会准备所需版本。各系统任选对应的一行：
 
   Windows PowerShell：
@@ -63,7 +75,7 @@ claude  # 用 Codex 的人改为 codex
 
 桌面版和 VS Code 里的 Codex 插件暂不支持按这份指南开启模拟模式，请用上述终端启动方式试用。
 
-模拟模式仍用自己的账户读取门店、菜单和价格，但不会创建订单或支付链接。**报价末尾会写“当前为模拟模式”**；没有这句话就不要确认试单。准备真实使用时，把值改成 `false`，退出程序再重新启动。
+模拟模式仍用自己的账户读取门店、菜单和价格，但不会创建真实订单或有效支付链接。**报价末尾会写“当前为模拟模式”**；没有这句话就不要确认试单。GUI 或会清理环境的宿主，请在本插件 MCP 配置的 `env` 明确设置 `COUPON_SPLIT_SIMULATE: "true"` 和 `ALLOW_REAL_ORDERS: "false"`。准备真实使用时撤销这两个模拟开关并重启服务。
 
 ## Claude Code 安装
 
@@ -98,7 +110,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.2/coupon_split-0.6.2-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件配置工具权限。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单和撤回仍保留逐次允许；wait_payment 和 pay_card 只读查询无需逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -106,7 +118,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.2/coupon_split-0.6.2-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -116,7 +128,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 3. 回本机授权页粘贴，点“保存到这台电脑”。**不要把 Token 发进聊天**。
 4. 回对话说“好了”。在点餐页选好，点“选好了，去算最省”，助手自动接着报价。
 
-也可以直接说“来份麦辣鸡腿堡，到店自取，外带，在北京望京中街附近”，或说“帮我配，3个人，一个不吃辣”“两个人，预算60”。宿主会从当前菜单配主推和备选，展示理由及照原样价；回复“就这样”或“换备选”后再算最省价，也可以继续改口味。网页开关只提供简易推荐。推荐使用你自己的 Claude Code/Codex，不需要额外的模型 API key。时间默认现在取；预约时请说清日期和钟点。外送只能选账户里已有的地址。
+也可以直接说“来份麦辣鸡腿堡，到店自取，外带，在北京望京中街附近”，或说“帮我配，3个人，一个不吃辣”“两个人，预算60”。宿主会从当前菜单配主推和备选，展示理由及照原样价；回复“就这样”或“换备选”后再算最省价，也可以继续改口味。网页开关只提供简易推荐。推荐使用你自己的 Agent，不需要额外的模型 API key。时间默认现在取；预约时请说清日期和钟点。外送只能选账户里已有的地址。
 
 凭据保存在本机系统凭据管理器；macOS 是钥匙串。其他系统无法使用钥匙串时，会提示仅本人可读的文件位置。凭据不交给作者、不进入聊天或产品日志。失效后按新授权页重新保存。
 
@@ -124,12 +136,23 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 
 ## 确认、付款、撤回
 
-- 先核对报价里的门店、规格、数量、餐具和时间，再回复“确认”。总额超过 ¥200 时，回复报价给出的完整句子，例如 `确认下单 ¥201.00`，金额保留两位小数。随后在允许弹窗里核对并点允许。
+- 先核对报价里的门店、规格、数量、餐具和时间，再回复“确认”。总额超过 ¥200 时，回复报价给出的完整句子，例如 `确认下单 ¥201.00`，金额保留两位小数。随后还要你本人再点一次“确认下单”：Claude Code 会弹出允许框；其他 Agent 会弹出确认框，或给你一个本机浏览器确认页（点完回对话说“好了”）。没有这一次点击就不会下单，Agent 自己写“确认”不算数。
 - 必须安装麦当劳 App。下单后打开本机付款页，在 15 分钟内付款；电脑用手机里的麦当劳 App 扫一扫（推荐）或微信扫码，手机可点“打开麦当劳 App 付款”。拆单时按页面提示逐笔支付，钱直接付给麦当劳。
-- 页面与对话助手会自动等待并更新状态；临近到期仍未付会自动撤回。备选入口是麦当劳 App →“我的订单”，这个入口及本人真实付款、付款后取餐码待手机实测。
+- 页面与对话助手会自动等待并更新状态；临近到期仍未付会自动撤回。备选入口是微信麦当劳小程序 → 我的订单（已见到本插件建的订单，能否直接付款待实测；麦当劳 App 的订单页目前可能看不到），这个入口及本人真实付款、付款后取餐码待手机实测。
 - 本机付款页需要点餐服务保持运行。手机中的 localhost 指手机自己，不能直接打开电脑的本机链接；电脑用户请直接用手机扫码，不要复制本机链接到手机。
 - 助手负责配餐内容，引擎按相同规格和数量比较原样、套餐、券、会员卡和拆单。省钱理由以报价的比较摘要为准；有界搜索不承诺穷尽所有买法。
+- 下单后如果麦当劳明确拒绝（比如“太火爆了”“商品已售罄”），会直接告诉你原话，并说明没生成订单、没扣钱，可以稍后重下。网络没拿到结果时会进入“核对中”，约 2 分钟内对照你的麦当劳订单给结论：其实已经下成了就请你付款，没下成就告诉你可以重新下单。
 - 想撤回就说“撤回订单”，等助手确认已取消及券是否退回。已付款订单请按麦当劳官方规则处理。结果不明时先查状态，不要重复下单。
+
+## 出问题怎么办
+
+下单或撤回出了问题，在终端执行下面的命令，导出一份去掉了 Token、完整订单号、券码和付款链接的诊断文件，发给开发（发之前自己打开看一眼，里面应该只有状态、商品码、时间、耗时和麦当劳返回的错误原因）：
+
+```text
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split diagnose
+```
+
+文件保存在用户主目录，名为 `mcd-order-diagnosis-<时间>.json`。本机的 `orders.log`（在点餐状态目录里）每次下单、撤回只记录耗时、HTTP 状态、麦当劳的错误码和说明、traceId。
 
 ## 装坏了怎么恢复
 
@@ -145,14 +168,14 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.6.2 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.6.2)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.7.0 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.7.0)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.2/coupon_split-0.6.2-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。

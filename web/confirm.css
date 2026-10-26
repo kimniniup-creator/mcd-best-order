@@ -1,0 +1,12 @@
+.confirm{background:#FFFCF6;border:1px solid #D9D1C2;border-radius:20px;padding:24px;max-width:560px}
+.confirm h2{margin:0 0 4px;font-size:20px}
+.confirm ul{list-style:none;margin:16px 0;padding:0}
+.confirm li{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px dashed #D3C9B6}
+.confirm .total{display:flex;justify-content:space-between;align-items:baseline;font-size:20px;font-weight:750;margin:16px 0}
+.confirm .real{background:#F9E6DD;color:#8A2F0F;border-radius:12px;padding:12px;margin:12px 0}
+.confirm .sim{background:#E6ECF7;color:#2E4673;border-radius:12px;padding:12px;margin:12px 0}
+.confirm .row{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.confirm button{min-height:48px;border-radius:12px;border:1px solid #1A1813;padding:12px 20px;font:inherit;cursor:pointer;background:transparent;color:#1A1813}
+.confirm button.go{background:var(--act);border-color:var(--act);color:#fff;font-weight:650}
+.confirm button:disabled{opacity:.55;cursor:default}
+.confirm .done{font-weight:650}

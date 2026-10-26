@@ -134,8 +134,15 @@ def order_guard(value):
     """Fail closed using the transcript and read-only local plan, never model prose."""
     def deny(reason):
         return {'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'deny','permissionDecisionReason':reason}}
+    def ask(reason):
+        return {'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'ask','permissionDecisionReason':reason}}
+    if not value.get('transcript_path'):
+        # DeepSeek Harness and similar hosts give hooks no transcript: hand the decision to the person
+        # (the server still asks for confirmation itself) instead of blocking every order.
+        return ask('宿主没有提供对话记录，无法核对你的确认原话。请你本人核对方案和金额后选择是否允许下单。')
     try:
-        text=last_user_message(value.get('transcript_path',''))
+        try:text=last_user_message(value.get('transcript_path',''))
+        except OSError:return ask('读不到对话记录，无法核对你的确认原话。请你本人核对方案和金额后选择是否允许下单。')
         # Whole-message matching rejects questions, quotes and negated consent.
         normalized=re.sub(r'[。！!，,\s]','',text or '')
         if not re.fullmatch(r'(?:确认(?:下单)?|同意下单|就这样下单)(?:[¥￥]?\d+\.\d{2})?',normalized):

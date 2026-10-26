@@ -99,11 +99,36 @@ def resolve_intent(utterance, rows):
     return result
 
 
+def default_choices(round_):
+    """Default picks for one combo round, filled to the round's minimum.
+
+    isDefault alone is not enough: a round that needs 3 picks may flag only one
+    choice. Fill the rest from the remaining official choices, in menu order.
+    """
+    minimum = int(round_.get('minQuantity', 1) or 0)
+    picks = []
+    total = 0
+    for c in round_['choices']:
+        if c.get('isDefault') and c.get('quantity', 1) > 0:
+            picks.append({'code': str(c['code']), 'quantity': c.get('quantity', 1)})
+            total += c.get('quantity', 1)
+    for c in round_['choices']:
+        if total >= minimum:
+            break
+        if any(p['code'] == str(c['code']) for p in picks) or c.get('quantity', 1) <= 0:
+            continue
+        if c.get('available') is False or c.get('isSelling') is False or c.get('soldOut'):
+            continue
+        take = min(c.get('quantity', 1), minimum - total)
+        picks.append({'code': str(c['code']), 'quantity': take})
+        total += take
+    return picks
+
+
 def default_item(detail, quantity=1):
     item = {'productCode': str(detail['code']), 'quantity': quantity}
     if detail.get('rounds'):
-        item['roundList'] = [dict(round=str(r['id']), comboItemList=[dict(code=str(c['code']), quantity=c.get('quantity', 1))
-            for c in r['choices'] if c.get('isDefault') and c.get('quantity', 1) > 0]) for r in detail['rounds']]
+        item['roundList'] = [dict(round=str(r['id']), comboItemList=default_choices(r)) for r in detail['rounds']]
     return item
 
 

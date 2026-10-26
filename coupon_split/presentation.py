@@ -119,7 +119,7 @@ def official_payment_url(value):
 def public(plan):
     result = copy.deepcopy(plan)
     result.pop("owner", None)
-    for field in ["evidence","names","before_order_ids","pending_requests","payment_key"]:
+    for field in ["evidence","names","before_order_ids","pending_requests","failed_requests","place_attempts","payment_key"]:
         result.pop(field,None)
     if result.get("state") not in {None,"quoted"}:
         for field in ["plans","no_card","confirm_token"]:
@@ -218,7 +218,7 @@ def markdown(plan):
                 fee='【卡费】' if row['productCode']=='521234' else ''
                 rows.append(f"- {fee}{row['productName']} ×{row['quantity']}　{money(row['subtotal'])}")
                 detail=line_detail(plan,row)
-                if detail:rows.append(('  每套：' if len(row.get('contents',[]))>1 else '  规格：')+detail)
+                if detail:rows.append(('  - 每套：' if len(row.get('contents',[]))>1 else '  - 规格：')+detail)
             if e.get('fulfillment')=='delivery':
                 rows += [f"- 配送费　{money(o['deliveryPrice'])}",f"- 打包费　{money(o['packingPrice'])}"+('（已免）' if o.get('packing_waived') else '（本单无打包费）' if o['packingPrice']==0 else '')]
             rows += ['- 用券：'+('；'.join(o.get('coupons',[])) or '不用'),f"- 本单实付 **{money(o['price'])}**"]
@@ -229,20 +229,32 @@ def markdown(plan):
             if p.get('buys_card'):rows += [f"买卡后本单比不买卡再省 {money(plan['no_card']['price']-p['price'])}。"]
         if plan.get('take_options'):
             rows += ['\n请选择取餐方式：'+'；'.join(str(i)+' '+(v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐') for i,v in enumerate(plan['take_options'],1))+'。']
-        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认** 下单，Claude Code/Codex 还会弹出允许请求。']
-        if p['price']>20000:rows += [f"本单超过 ¥200，还需追加确认：**确认下单 ¥{p['price']/100:.2f}**。"]
-        if not plan.get('real_orders_enabled'):rows += ['当前为模拟模式，不产生真实订单。']
-        if plan.get('comparison_summary'):rows += ['\n比较摘要：'+plan['comparison_summary']['text']+'\n'+plan['comparison_summary']['scope']]
+        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认** 下单；之后还会请你在浏览器确认页或弹出的确认框里再点一次“确认下单”。']
+        if p['price']>20000:rows += [f"\n本单超过 ¥200，还需追加确认：**确认下单 ¥{p['price']/100:.2f}**。"]
+        if not plan.get('real_orders_enabled'):rows += ['\n当前为模拟模式，不产生真实订单。']
+        if plan.get('comparison_summary'):rows += ['\n比较摘要：'+plan['comparison_summary']['text']+'\n\n'+plan['comparison_summary']['scope']]
         return '\n'.join(rows)
     if plan.get("dry_run"):
         n=len(plan["orders"])
         cancelled=plan["state"]=="cancelled"
         return ("**模拟 · 已撤回，没有产生任何订单。**" if cancelled else "**模拟下单，未产生真实订单，也不能付款。**")+ ("" if cancelled else f"\n需依次支付 {n} 笔（真实下单时）。" if n>1 else "\n真实下单时付 1 次。")+"\n"+"\n".join(f"单 {i}｜{money(o['price'])}｜{'已撤回' if cancelled else o['orderStatus']}" for i,o in enumerate(plan["orders"],1))
+    if plan['state'] == 'verifying':
+        return ('**正在核对这单有没有下成……**\n\n麦当劳没有给出明确结果，我在对照你的麦当劳订单，约 2 分钟内给结论。'
+                '请先不要重新下单；核对完会告诉你是“已经下成，去付款”还是“没下成，可以重下”。')
+    if plan['state'] == 'place_failed':
+        info = plan.get('failure') or {}
+        if info.get('kind') == 'manual':
+            return '**暂时无法确认这单有没有下成。**\n\n' + info.get('message', '请打开微信麦当劳小程序 → 我的订单核对。')
+        if info.get('kind') == 'not_created':
+            return '**没下成。**\n\n' + info.get('message', '')
+        return ('**没下成。**\n\n' + info.get('message', '麦当劳没有接受这次下单。')
+                + '\n\n没有生成订单，没扣钱，' + ('等一会儿' if info.get('busy') else '可以稍后') + '重新下单就行。')
     if plan['state'] in {'paid','partially_completed'}:
         from coupon_split.payment import payment_message
         return payment_message(plan)
     if plan['state'] == 'cancelled':
-        return "**已撤回。**\n本可省 " + money(plan.get('selected',{}).get('savings',0)) + "，已撤回。\n" + "\n".join(f"单 {i}｜{money(o['price'])}｜已撤回" for i,o in enumerate(plan['orders'],1))
+        reason = plan.get('cancel_reason')
+        return "**已撤回。**\n" + (reason + "\n" if reason else "本可省 " + money(plan.get('selected',{}).get('savings',0)) + "，已撤回。\n") + "\n".join(f"单 {i}｜{money(o['price'])}｜已撤回" for i,o in enumerate(plan['orders'],1))
     state={"awaiting_payment":"待支付","cancelled":"已撤回","rollback_pending":"撤回待核验","awaiting_coupon_return":"已撤回，退券待核验","paid":"已支付","placing":"处理中"}.get(plan["state"],"核验中")
     from coupon_split.payment import payment_state
     snapshot=payment_state(plan)
@@ -257,4 +269,6 @@ def markdown(plan):
         payment=public({'orders':[o]})['orders'][0]
         link = f"[打开付款页]({plan.get('payment_url','')})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
         rows.append(f"单 {i}｜{money(o['price'])}｜{o['orderStatus']}｜{link}｜{o['expirePayTime']} 前付款。")
-    return "\n\n".join(rows)+"\n\n请在15分钟内付款。必须安装麦当劳 App。电脑请打开付款页，用手机麦当劳 App 扫一扫（推荐），也可用微信扫一扫；手机可直接打开 App。也可在 App → 我的订单中查找本单（此入口待实测）。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’。"
+    if plan.get('late_found') and plan['state'] == 'awaiting_payment':
+        rows.insert(0, '**其实已经下成了。**麦当劳刚才没及时回复，我核对账户订单后确认这单已经建好，没有撤回。请在 15 分钟内付款（付款页，或微信麦当劳小程序 → 我的订单（能否直接付款待实测））。')
+    return "\n\n".join(rows)+"\n\n请在15分钟内付款。必须安装麦当劳 App。电脑请打开付款页，用手机麦当劳 App 扫一扫（推荐），也可用微信扫一扫；手机可直接打开 App。备选：微信麦当劳小程序 → 我的订单（能否直接付款待实测；App 订单页目前可能看不到本单）。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’。"

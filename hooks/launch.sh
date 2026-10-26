@@ -1,14 +1,14 @@
 #!/bin/sh
 # Resolve a fixed cached release before attempting any network access.
 if ! command -v uv >/dev/null 2>&1; then
-  hint='缺少 uv。Windows PowerShell: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" ; macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh 。安装后重开终端和 Claude Code 或 Codex。'
+  hint='缺少 uv。Windows PowerShell: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" ; macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh 。安装后重开终端和你的 Agent。'
   case "$1" in
     server) printf '%s\n' "$hint" >&2; exec sh "$(dirname -- "$0")/missing_uv.sh" ;;
     *) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"缺少 uv。请向用户展示安装命令：Windows PowerShell：powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"；macOS/Linux：curl -LsSf https://astral.sh/uv/install.sh | sh。安装后重开终端。"}}'; exit 0 ;;
   esac
 fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.6.2/coupon_split-0.6.2-py3-none-any.whl'
+source='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.0/coupon_split-0.7.0-py3-none-any.whl'
 case "$1" in
   server) exec uv run --offline --no-project --python 3.14 "$root/hooks/stdio_gateway.py" ;;
   hook) exec uv run --offline --no-project --python 3.14 "$root/hooks/order_context.py" ;;
