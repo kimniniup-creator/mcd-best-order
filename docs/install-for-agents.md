@@ -1,13 +1,15 @@
-# 任意 MCP Agent 安装与自检（0.7.9）
+# 任意 MCP Agent 安装与自检（0.8.0）
 
 模型名不等于宿主名：DeepSeek 可以运行在 DSH、Cursor 等不同应用中。先看当前应用、命令或配置界面，再选 host。无需斜杠命令、Skill 或钩子；MCP instructions、工具描述和文本结果自带流程，MCP prompts 的 `order_mcdonalds` 是可选入口。
 
 ## 命令
 
+> 同事安装的是公开仓库 [mcd-best-order](https://github.com/kimniniup-creator/mcd-best-order)（下面的命令已经指向它的发布包）；不要克隆私有开发仓库 coupon-split，没有权限，会报 exit 128。
+
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.9/coupon_split-0.7.9-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.0/coupon_split-0.8.0-py3-none-any.whl coupon-split
 ```
 
 ```sh
@@ -51,7 +53,7 @@ DeepSeek Harness（dsh）的特殊点，都已由 `setup --host dsh` 处理：
 
 - 一个 MCP 服务对应一行 Cordis 配置（`@deepseek-ai/dsh-mcp-client`，不接受 `mcpServers` JSON）。安装器在独立 profile `mcd` 的 `cordis.patch.yml` 里写一个带标记的块，卸载时只移除这个块。若 profile 目录不存在，会按 dsh 的 profile 清单格式新建（`package.json`、`cordis.yml`、`pnpm-workspace.yaml`），已有文件不覆盖。要手动安装，把这个块复制进你自己的 `cordis.patch.yml`，把 `skills/mcd-order/SKILL.md` 放进该 profile 的 `skills/`。
 - dsh 会从 stdio 子进程环境里删掉名字含 KEY/TOKEN/SECRET/PASSWORD 的变量，所以块里用 `process.env.MCD_MCP_TOKEN` 显式转发；Token 永远只读环境变量，不写进文件。启动 dsh 的同一个终端里设置它。
-- dsh 只把工具结果的文本交给模型，看不到 `structuredContent`。每个工具结果末尾都有“给 Agent 的下一步”代码块（next_tool、next_arguments、session_id、plan_id、confirm_token、store_code、items……），structuredContent 里有同样内容，所以只读文本的宿主也能走完整个流程。
+- dsh 只把工具结果的文本交给模型，看不到 `structuredContent`。每个工具结果末尾都有一块结构化 JSON（state、allowed_actions、session_id、plan_id、confirm_token、store_code、items……），structuredContent 里有同样内容，所以只读文本的宿主也能走完整个流程。
 - dsh 对 MCP 工具不弹审批。服务端因此在 `place_orders` 里自己要一次由人完成的确认（见下一节），模型自己写“确认”不能下单。
 - 默认模拟模式（`COUPON_SPLIT_SIMULATE` 未设置时为 true）。真实下单：启动 dsh 前设置 `COUPON_SPLIT_SIMULATE=false`。
 - 卸载：`coupon-split uninstall --host dsh --apply`（保留 profile 目录），或手动删除整个 `$DSH_HOME/profiles/mcd`。
@@ -65,7 +67,7 @@ dsh 的 npm bundle 形式的发布是可选项，本版没有做；手动步骤�
 **没有任何按宿主身份放行的豁免**（0.7.8 起）：`clientInfo`、User-Agent、环境变量等客户端能自报的信息都不能证明人点过确认；Claude Code、Codex 与其他宿主一样，会多一次确认点击。模拟模式（`COUPON_SPLIT_SIMULATE=true`）例外：只需白名单确认句，便于演示。真实下单按顺序：
 
 1. 宿主支持 MCP elicitation：服务端弹出确认框，显示门店、餐品和金额，用户须勾选“确认下单”并在“实付金额”里填回与报价一致的金额再接受。拒绝、取消、超时、金额不一致、宿主自动回复拒绝，都不算确认，改走第 2 步。
-2. 否则（或第 1 步未通过；dsh、Codex、Claude Code 无弹窗时、HTTP 模式）：`place_orders` 先返回 `stage=confirm` 和本机确认页链接。Agent 把链接原样发给用户，再用同样的参数再次调用 `place_orders`，服务端最多等约 50 秒让用户在浏览器点“确认下单”。点了才下单；点“先不下单”或超时不会下单。确认页只接受同源的页面点击，一次确认只对应这个方案、金额和取餐方式。
+2. 否则（或第 1 步未通过；dsh、Codex、Claude Code 无弹窗时、HTTP 模式）：`place_orders` 先返回 `stage=confirm` 和本机确认页链接。Agent 把链接发给用户，再用同样的参数再次调用 `place_orders`，服务端最多等约 50 秒让用户在浏览器点“确认下单”。点了才下单；点“先不下单”或超时不会下单。确认页只接受同源的页面点击，一次确认只对应这个方案、金额和取餐方式。
 
 这挡的是“模型代替用户确认”，不是本机上的恶意程序：能读 `~/.coupon-split` 并伪造浏览器请求的本机程序不在防护范围。钩子拿不到对话记录的宿主（如 dsh 的 Claude 钩子桥）里，本插件的核对钩子会返回 `ask` 而不是直接拒绝。
 
@@ -85,9 +87,9 @@ Cursor/Kiro 可用 `url`，VS Code 可用 `type:http` + `url`，Gemini CLI 的 S
 ## 自检与点餐约定
 
 1. MCP initialize 应有完整 instructions，tools/list 应含点餐和付款工具；支持 prompts 的宿主可读 `order_mcdonalds`，不支持 prompts 仍能工作。
-2. 实际调用 `mcd_start(utterance="我要吃麦当劳")`。未授权只在本机页输入自己的 Token，切勿贴进聊天；已授权会询问点法及缺失要素。
-3. “帮我配”由 Agent 读当前菜单并用 `propose_cart` 校验，主备选经用户认可后才 `quote_best`。“自己点”先把点餐页链接发到可见正文，再 `get_cart` 等待。原样展示方案卡，价格由引擎算。
+2. 实际调用 `mcd_start(utterance="我要吃麦当劳")`。未授权只在本机页输入自己的 Token，切勿贴进聊天；已授权会返回已确定的槽位和缺的要素（missing）。
+3. “帮我配”由 Agent 读当前菜单并用 `propose_cart` 校验，主备选经用户认可后才 `quote_best`。“自己点”由 Agent 把点餐页链接发给用户，`get_cart` 返回用户是否打开过页面、是否已提交。价格由引擎算。
 4. 报价后结束回合等明确确认。`place_orders.user_confirmation` 逐字复制用户本轮最后一句；<!--confirm-rule-->只有这四种标准确认句才算确认：“确认下单”“确认”“同意下单”“就这样下单”（后面可带金额，如“确认下单 ¥10.00”，超过 ¥200 时必须带金额；金额必须是规范写法：可选一个货币符号 ¥ ￥ RMB CNY，整数加最多两位小数，可选一个单位元或块，不能有千分位逗号、多个符号或多个小数点，格式不对不算确认，改在确认页点确认下单；前面可带“好的”“好”“嗯嗯”“嗯”“对”“是的”“OK”“okay”，后面可带“谢谢你”“谢谢”“多谢”“谢了”“麻烦了”“辛苦了”“吧”），其余话一律不算确认，服务端只提示用户回复“确认下单”。<!--/confirm-rule-->**撤回由 Agent 判断**：用户任何时候表达不想要、取消、改天、不吃了、等一下、先别、我再想想等不想继续的意思，Agent 立刻调用 `withdraw_order(plan_id)`（或 `cancel_plan`），并如实转告结果；拿不准先问“要撤回这单吗”。“不要香菜”“换成大杯可乐”“等一下我看看菜单”这类只是改餐品，不是撤回。确认页和付款页都有“撤回这单”按钮，点一下即撤回，不经任何语言判断。服务端另有一道兜底：`place_orders` 收到 取消、撤回、撤单、撤销、撤订、退单、退订、不要了、不要这单、别下单、不下了、不点了、不买了、算了、cancel、stop（及繁体、同音错别字）时，确认页作废或订单撤回；“不要”“等等”“稍等”“改一下”“换一下”“先别”这类弱词不触发兜底。回复“确认下单”才会下单；不想要了随时撤回。金额写错也拒绝。超过 ¥200 要完整原文“确认下单 ¥金额”（两位小数），辅助字段不能替代原文。`place_orders` 可能先返回确认页链接（见上一节“下单前的人工确认”）：原样发给用户，再用同样参数重新调用并等待，绝不自己点。确认后才会建真实待付款单；首次提醒用户，可先模拟。若下单没成功，原样转述麦当劳的原话；状态是核对中就用 `wait_payment` 等结论，不要重新下单。
-5. 原样展示付款卡后循环 `wait_payment`；只读查询不自行下单。模拟模式没有可用支付链接或真实订单；不要拿模拟付款卡冒称真实支付成功。
+5. 把付款卡和付款页链接发给用户后用 `wait_payment` 等结果；只读查询不自行下单。模拟模式没有可用支付链接或真实订单；不要拿模拟付款卡冒称真实支付成功。
 
 安装自检不要下单。完整模拟测试须显式设 `COUPON_SPLIT_SIMULATE=true`、`ALLOW_REAL_ORDERS=false`；若宿主会清理环境，将这两个非秘密开关放进本插件配置的 env。仅看到 tools/list 或配置语法正确，只能记为“配置验证”，不能记为“宿主完整实测”。

@@ -62,8 +62,9 @@ def normalize_elements(value):
     if unknown:
         raise ValueError('未知 elements 键：' + '、'.join(sorted(unknown)) + '；正确键名：' + '、'.join(OrderElements.model_fields))
     sources = value.get('sources', {})
-    if set(sources) - (OrderElements.model_fields.keys() - {'sources', 'delivery_address'} | {'store_code'}):
-        raise ValueError('sources 请使用正确的 elements 键名或 store_code')
+    bad = set(sources) - (OrderElements.model_fields.keys() - {'sources', 'delivery_address'} | {'store_code'})
+    if bad:
+        raise ValueError('sources 请使用正确的 elements 键名或 store_code；不认识：' + '、'.join(sorted(bad)))
     return OrderElements.model_validate(value).model_dump(exclude_unset=True)
 
 
@@ -77,7 +78,8 @@ def merge_elements(previous, incoming):
     for k, v in incoming.items():
         if k != 'sources':
             result[k] = v
-            sources[k] = incoming.get('sources', {}).get(k, 'utterance')
+            if k != 'delivery_address':  # derived from addressId; it has no source of its own
+                sources[k] = incoming.get('sources', {}).get(k, 'utterance')
     sources.update(incoming.get('sources', {}))
     result['sources'] = sources
     return result

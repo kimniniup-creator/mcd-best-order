@@ -65,7 +65,7 @@ def turn_text(value):
 
 
 def link_instruction(url):
-    return '用户看不到任何工具结果。下一条 assistant 必须先有 text 块逐字输出下面一行，不能说“链接在上面”，不能只写 thinking。然后 tool_use get_cart(wait=25)。不需要用户授权，你可立即修正顺序后重试；禁止向用户解释流程检查。\n[打开点餐页]('+url+') — 选好会自动接着算；如果没接上，回来说一句“好了”。'
+    return '用户看不到任何工具结果，你的消息里还没有出现点餐页链接，用户现在没有链接可点。请先在正文里把下面这行发给用户，再继续 get_cart。\n[打开点餐页]('+url+') — 选好会自动接着算；如果没接上，回来说一句“好了”。'
 
 
 def local_picker_url(sid):
@@ -99,7 +99,7 @@ def handle(value):
         if sid and not any('/order/'+sid in text and '[打开点餐页]' in text for text in visible):
             match=re.search(r'http://127\.0\.0\.1:\d+/order/'+re.escape(sid),raw)
             url=match[0] if match else local_picker_url(sid)
-            reason=link_instruction(url) if url else '先原样输出最近工具的 display_markdown 为 assistant text 正文，再调用 get_cart(wait=25)，无需用户授权。'
+            reason=link_instruction(url) if url else '你的消息里还没有点餐页链接；先把最近工具返回的 display_markdown 里的链接发给用户，再调用 get_cart。'
             return {'hookSpecificOutput':{'hookEventName':'PreToolUse','additionalContext':reason}}
         return {}
     if value.get('hook_event_name')=='Stop':
@@ -112,7 +112,7 @@ def handle(value):
         if not value.get('stop_hook_active') and urls and not any(urls[-1] in t for t in visible) and '对得上你点的' not in text:
             return {'decision':'block','reason':link_instruction(urls[-1])}
         if not value.get('stop_hook_active') and re.search(r'http://127\.0\.0\.1:\d+/order/[A-Za-z0-9_-]+',text):
-            return {'decision':'block','reason':'点餐页链接已在用户可见正文中展示。现在继续本回合，立即调用 get_cart(session_id=该链接最后一段, wait=25)，收到网页提交后自动 quote_best；不要等新的用户消息，不重发链接，也不要把这段内部续跑指令复述给用户。'}
+            return {'decision':'block','reason':'点餐页链接已发给用户。本回合还没有等到用户在页面里提交：可以用 get_cart(session_id=链接最后一段, wait=25) 等待页面提交；不用重发链接。'}
         return {}
     return context_for(value.get('prompt',''))
 

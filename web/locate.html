@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>定位 · 最优下单</title><link rel="stylesheet" href="/design/tokens.css"><link rel="stylesheet" href="/design/v2/v2.css">
+<style>main{max-width:32rem;margin:10vh auto;padding:24px;font:17px/1.8 system-ui,sans-serif}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:.5rem 0}button{font:inherit;padding:.7rem 1.4rem;border-radius:999px;border:0;cursor:pointer;margin:1rem .5rem 0 0}#allow{background:#ffbc0d;color:#1a1a1a;font-weight:600}#skip{background:transparent;text-decoration:underline}button:focus-visible{outline:3px solid #1a1a1a;outline-offset:2px}#status{display:block;min-height:1.8em;margin-top:1rem}</style></head>
+<body><main>
+<h1>用当前位置找最近的麦当劳</h1>
+<p>点“允许定位”后，浏览器会问你一次。位置只用来换算成附近地名去查门店，不会保存坐标。</p>
+<button id="allow" type="button">允许定位</button><button id="skip" type="button">不用了，我自己说地标</button>
+<output id="status" role="status" aria-live="polite"></output>
+</main>
+<script>
+const status=document.getElementById('status'),allow=document.getElementById('allow'),skip=document.getElementById('skip')
+async function send(body){
+  const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  return [r.ok,await r.json().catch(()=>({}))]
+}
+function done(text){status.textContent=text;allow.disabled=skip.disabled=true}
+skip.onclick=async()=>{await send({denied:true});done('好的，回到对话说个地标就行。')}
+allow.onclick=()=>{
+  if(!navigator.geolocation){send({denied:true});return done('这个浏览器不支持定位，回到对话说个地标就行。')}
+  status.textContent='正在定位…';allow.disabled=true
+  navigator.geolocation.getCurrentPosition(async p=>{
+    const [ok,d]=await send({latitude:p.coords.latitude,longitude:p.coords.longitude})
+    if(ok)done('定位到了：'+d.city+' · '+d.keyword+'附近。回到对话，助手会接着找门店。')
+    else done(d.error||'定位失败，回到对话说个地标就行。')
+  },async e=>{
+    await send(e.code===1?{denied:true}:{failed:true})
+    done(e.code===1?'你没有允许定位。回到对话说个地标就行。':'没拿到位置，回到对话说个地标就行。')
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:60000})
+}
+</script></body></html>

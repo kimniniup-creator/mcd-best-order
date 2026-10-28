@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 NUM = r'[零〇一二两三四五六七八九十\d]+'
-DATE = rf'今天|明天|后天|(?:本|这|下)?(?:周|星期)[一二三四五六日天]|(?:{NUM}月)?{NUM}(?:日|号)'
+DATE = rf'今天|明天|后天|(?:本|这|下)?(?:周|星期)[一二三四五六日天]|(?:{NUM}月)?{NUM}(?:日|号(?![楼院室门栋幢座层单弄路巷]))'
 PERIOD = r'早上|上午|中午|下午|晚上|傍晚|夜里|凌晨|明早|今晚'
 CLOCK = rf'(?P<h>{NUM})(?:点|时)(?:(?P<part>半|一刻|三刻)|(?P<m>{NUM})分?)?|(?P<colon>\d{{1,2}}[:：]\d{{2}})'
 TEMPORAL = re.compile(rf'(?:{DATE})|(?:{PERIOD})|(?:{CLOCK})|预约|现在取|现在送|立即取|立即送')

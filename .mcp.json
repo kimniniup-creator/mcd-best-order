@@ -15,6 +15,7 @@
         "MCD_MCP_TOKEN",
         "COUPON_SPLIT_HOME",
         "ALLOW_REAL_ORDERS",
+        "AMAP_KEY",
         "COUPON_SPLIT_SIMULATE",
         "UV_CACHE_DIR",
         "PYTHON_KEYRING_BACKEND"

@@ -45,6 +45,9 @@ def matches(text, rows):
 def intent_text(utterance):
     from coupon_split.timeparse import strip_time
     utterance = strip_time(utterance)
+    # an answer that only agrees or picks a time ("那就明天中午12点") names no food
+    if re.fullmatch(r'(?:那就|那好|那|就|好的|好吧|好|行吧|行|可以|嗯+|对|是的|就这样)?[，。！!、\s]*(?:吧|了|呢|啊|哦)?[，。！!\s]*', utterance):
+        return ''
     utterance = re.sub(r'(?:想点|要点)(?:个)?麦当劳', '', utterance)
     utterance = re.sub(r'(?:我)?(?:想)?吃点(?:东西|什么)|肚子(?:有点)?饿了|有点饿|不预约|无需预约|不用预约', '', utterance)
     utterance = re.sub(r'(?:我)?(?:想)?自己(?:来)?(?:点|选|看看菜单|看下菜单|看菜单)(?:餐)?', '', utterance)

@@ -8,7 +8,7 @@ if ! command -v uv >/dev/null 2>&1; then
   esac
 fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.7.9/coupon_split-0.7.9-py3-none-any.whl'
+source='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.0/coupon_split-0.8.0-py3-none-any.whl'
 case "$1" in
   server) exec uv run --offline --no-project --python 3.14 "$root/hooks/stdio_gateway.py" ;;
   hook) exec uv run --offline --no-project --python 3.14 "$root/hooks/order_context.py" ;;

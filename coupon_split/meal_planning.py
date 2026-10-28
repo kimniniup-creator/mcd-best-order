@@ -41,8 +41,7 @@ async def context(s, store_code, session_id, people, offset):
                 people=cart.get('people') or 1, people_source='用户' if cart.get('people') else '暂按1人，可修改',
                 user_requests=raw, budget_cents=budget(raw), rules=RULES,
                 previous_items=cart.get('previous_items',cart.get('items',[])),
-                items=[], total=len(rows), next_offset=None, next_tool='propose_cart',
-                next_action='宿主根据菜单和 user_requests 自己配出两个不同方案，调用 propose_cart；此时不能报价。')
+                items=[], total=len(rows), next_offset=None)
     text = '我会按你的条件配一个主推和一个备选，核实价格后给你选。'
     for row in rows[offset:offset+8]:
         detail = (await s.upstream.call(s.token(), 'query-meal-detail', dict(base, code=row['productCode'])))['data']
@@ -147,17 +146,15 @@ async def propose(s, session_id, options):
         except (ValueError, KeyError, TypeError) as exc:
             errors.append({'option':n,'reason':str(exc)})
     if errors:
-        return s.result(dict(stage='compose',valid=False,errors=errors,session_id=session_id,next_tool='propose_cart',
-                             next_action='按具体错误重新配两个方案；原购物车未修改。'),'方案需要调整：\n'+'\n'.join(f"方案{x['option']}：{x['reason']}" for x in errors))
+        return s.result(dict(stage='compose',valid=False,errors=errors,session_id=session_id,cart_unchanged=True),'方案需要调整：\n'+'\n'.join(f"方案{x['option']}：{x['reason']}" for x in errors))
     if accepted[0]['items'] == accepted[1]['items']:
-        return s.result(dict(valid=False,errors=[{'reason':'主推与备选餐品相同，请给不同方案'}],session_id=session_id,next_tool='propose_cart'),'主推和备选需要是不同的方案，请重新配。')
+        return s.result(dict(valid=False,errors=[{'reason':'主推与备选餐品相同，请给不同方案'}],session_id=session_id),'主推和备选需要是不同的方案，请重新配。')
     cart.update(items=copy.deepcopy(accepted[0]['items']),meal_options=accepted,recommendation_pending=True,submitted=False,intent_resolved=True)
     cart.pop('pending_plan_id',None)
     s.carts[session_id]=cart
     text='\n\n'.join(f"{'主推' if n==0 else '备选'}：{x['title']}\n{x['item_summary']}\n理由：{x['reason']}\n照原样价 ¥{x['price']/100:.2f}" for n,x in enumerate(accepted))
     text+='\n\n辣度、份量及过敏原以官方资料为准；未知项不能保证。回复“就这样”或“换备选”，也可以说“不要辣的”“再加一份薯条”。认可后再算最省价。'
-    return s.result(dict(stage='proposal',valid=True,session_id=session_id,options=accepted,next_tool=None,
-                         after_user_confirmation_tool='mcd_start',next_action='原样展示两个方案并停止等待认可，不能立刻 quote_best。'),text)
+    return s.result(dict(stage='proposal',valid=True,session_id=session_id,options=accepted,awaiting_user_acceptance=True),text)
 
 
 async def simple(s, store_code, people, elements):
@@ -181,7 +178,7 @@ async def simple(s, store_code, people, elements):
         detail=details.get(row['productCode']) or (await s.upstream.call(s.token(),'query-meal-detail',dict(base,code=row['productCode'])))['data']
         if available(detail): selected.append({'name':row['name'],'item':default_item(detail,quantity)})
     label="简易推荐，想要更合口味的回对话说'帮我配'"
-    return s.result(dict(recommended_items=selected,next_tool=None,label=label),label)
+    return s.result(dict(recommended_items=selected,label=label),label)
 
 
 def modifier_conflicts(detail, item, raw):

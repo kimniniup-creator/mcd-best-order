@@ -1,7 +1,7 @@
 [
   {
     "name": "find_store",
-    "description": "mcd_start 后，按用户给出的城市、地标和方式查询门店；不能从地址簿擅自推断用户想外送。",
+    "description": "按城市、地标和取餐方式查门店；外送按账户已保存的地址（address_id）查。不从地址簿擅自推断用户想外送。",
     "inputSchema": {
       "properties": {
         "city": {
@@ -69,6 +69,289 @@
     },
     "annotations": {
       "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "resolve_order",
+    "description": "把你对用户原话的理解，按点餐本体的槽位（取餐方式、城市与地标或外送地址的说法、时间、餐品与规格、人数、忌口）传进来。\n服务端用账户已保存的地址、门店的营业与预约时段、实时菜单和官方规格逐项核对，返回：\nresolved（每个槽位的值和来源）、ambiguous（候选和区分候选要问的事实）、missing（必须问用户的槽位）、\nviolations（违反的约束：reason_code、事实、可行替代）、state 和 allowed_actions。\n用户没说的槽位不要填；可以重复调用，每次带上这一单完整的 foods。\n",
+    "inputSchema": {
+      "$defs": {
+        "Food": {
+          "properties": {
+            "phrase": {
+              "description": "用户说的餐品，保持用户的词（黑话、简称、错别字都行）；规格词可以留在里面",
+              "title": "Phrase",
+              "type": "string"
+            },
+            "quantity": {
+              "anyOf": [
+                {
+                  "maximum": 20,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "数量；用户没说就不填",
+              "title": "Quantity"
+            },
+            "spec": {
+              "description": "规格，如 大杯、去冰",
+              "items": {
+                "type": "string"
+              },
+              "title": "Spec",
+              "type": "array"
+            }
+          },
+          "required": [
+            "phrase"
+          ],
+          "title": "Food",
+          "type": "object"
+        },
+        "Interpretation": {
+          "description": "Your reading of what the user said, slot by slot. Leave out whatever the user did not say.",
+          "properties": {
+            "fulfillment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pickup",
+                    "drive",
+                    "delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "取餐方式：pickup 到店自取，drive 得来速，delivery 外送",
+              "title": "Fulfillment"
+            },
+            "city": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "城市（自取、得来速查门店用）",
+              "title": "City"
+            },
+            "landmark": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "地标、小区或街道（自取、得来速）",
+              "title": "Landmark"
+            },
+            "address": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "外送时用户对地址的说法，原样转述，如“北二门那个地址”“公司”；服务端会对上账户已保存的地址",
+              "title": "Address"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/When"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "取餐或送达时间；用户没提时间就不填（默认立即）"
+            },
+            "foods": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Food"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "这一单完整的餐品清单（会替换之前的）；本轮没提餐品就不填",
+              "title": "Foods"
+            },
+            "people": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "几个人吃",
+              "title": "People"
+            },
+            "avoid": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "忌口",
+              "title": "Avoid"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "帮我配",
+                    "我自己点",
+                    "照上次那份"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "用户要你配餐、自己在点餐页点，还是照上次",
+              "title": "Plan"
+            },
+            "tableware": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "是否要餐具",
+              "title": "Tableware"
+            },
+            "take_way": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "eat-in",
+                    "take-in-store"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "堂食 eat-in 或外带 take-in-store",
+              "title": "Take Way"
+            }
+          },
+          "title": "Interpretation",
+          "type": "object"
+        },
+        "When": {
+          "properties": {
+            "kind": {
+              "default": "immediate",
+              "enum": [
+                "immediate",
+                "reserve"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "text": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "用户说的预约时间原话，如“明天中午12点半”；由服务端解析",
+              "title": "Text"
+            },
+            "at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "你已经算出的预约时间，上海时间 YYYY-MM-DD HH:MM；与 text 二选一",
+              "title": "At"
+            }
+          },
+          "title": "When",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "utterance": {
+          "description": "逐字复制本轮最后一条用户消息；历史由服务端保留，不要拼接",
+          "title": "Utterance",
+          "type": "string"
+        },
+        "interpretation": {
+          "$ref": "#/$defs/Interpretation"
+        },
+        "session_id": {
+          "default": "",
+          "description": "同一对话后续每轮传前一轮返回的 session_id；新对话留空",
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "utterance",
+        "interpretation"
+      ],
+      "title": "resolve_orderArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true
@@ -278,7 +561,7 @@
   },
   {
     "name": "propose_cart",
-    "description": "提交一个主推+一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。\n校验菜单/时段/忌口/官方选配和照原样价；错误按原因重配。成功只更新本地购物车。\n原样展示后停止等用户“就这样”“换备选”或修改；认可后 mcd_start → quote_best，禁止自主下单。\n",
+    "description": "提交一个主推+一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。\n校验菜单、时段、忌口、官方选配和照原样价；错误按原因重配。成功只更新本地购物车，方案要等用户认可后才能报价。\n",
     "inputSchema": {
       "properties": {
         "session_id": {
@@ -667,7 +950,7 @@
   },
   {
     "name": "quote_best",
-    "description": "输入 sku:数量，核价并在本地保存方案和确认凭证，不创建上游订单。同购物车并发复用，其余同账户排队。先展示金额，等下一回合确认。",
+    "description": "向麦当劳核价，得到用户要看的价格和确认凭证，并在本地保存方案；不创建上游订单。用户看到报价之前不能确认下单；核价只是问价，不产生订单、不扣款，不用先征得用户同意。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。",
     "inputSchema": {
       "$defs": {
         "OrderElements": {
@@ -820,11 +1103,16 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            {
+              "type": "null"
             }
           ],
+          "default": null,
           "title": "Items"
         },
         "store_code": {
+          "default": "",
           "title": "Store Code",
           "type": "string"
         },
@@ -843,12 +1131,13 @@
             }
           ],
           "default": null
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
         }
       },
-      "required": [
-        "items",
-        "store_code"
-      ],
       "title": "quote_bestArguments",
       "type": "object"
     },
@@ -1027,7 +1316,7 @@
   },
   {
     "name": "withdraw_order",
-    "description": "撤回这单。用户在任何时候表达不想要、取消、改天再说、不吃了、等一下、先别、我再想想等不想继续的意思，必须立刻调用，不用等特定词、不用先确认：确认页还没点就作废确认页，订单已建就撤回订单。把返回结果如实告诉用户；拿不准用户是不是想撤，先问“要撤回这单吗”。不要香菜、换大杯这类只是改餐品，不用撤回。",
+    "description": "撤回这单：确认页还没点就作废确认页，订单已建就撤回订单，已付款则说明无法在这里撤回。用户在任何时候表达不想要、取消、改天再说、不吃了、等一下、先别、我再想想这类不想继续的意思，就立刻调用，不用等特定词。返回结果如实转告用户。拿不准是不是想撤，可以先问“要撤回这单吗”。“不要香菜”“换大杯”这类只是改餐品，不是撤回。",
     "inputSchema": {
       "properties": {
         "plan_id": {
@@ -1267,7 +1556,7 @@
   },
   {
     "name": "mcd_start",
-    "description": "用户一提到想吃/点麦当劳（如“我要吃麦当劳”），立刻调用本工具，不要先追问；开始或修改点餐、继续刚才的餐品；报价后的“确认下单”“确认”“同意下单”“就这样下单”（可带金额，如“确认下单 ¥金额”）必须直接调用 place_orders，绝不调用本工具。无需用 shell 读取 SKILL.md。\n\n每轮逐字传用户原话；同一对话后续轮传前一轮 session_id，新对话留空。\n按 next_tool 和 next_arguments 同回合继续，只追问 missing。\n原样展示 display_markdown（中文，禁止英文元话）。先向用户发出点餐页链接，\n再 get_cart(wait=25,link_displayed=true)，同一回合链接只发一次，超时继续等。\n收到 submitted 自动 quote_best；收到“好了”仍调用本工具恢复。\n报价完整展示后停等明确确认；place_orders 逐字传用户最后一句，宿主有审批时仍须允许，不得自主下单。\n缺授权只给本机 setup_url，绝不索要聊天 Token；禁止创建地址。\n",
+    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）交给 place_orders，不要再调用本工具。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。\n",
     "inputSchema": {
       "properties": {
         "utterance": {
@@ -1306,9 +1595,25 @@
         },
         "session_id": {
           "default": "",
-          "description": "同一对话后续每轮必填：复制前一轮返回的 session_id，否则会开启新会话并丢失人数/预算/忌口。仅全新对话留空，禁止查询或猜旧 ID。",
+          "description": "同一对话后续每轮传前一轮返回的 session_id（否则开启新会话，丢失人数、预算、忌口）；全新对话留空。",
           "title": "Session Id",
           "type": "string"
+        },
+        "foods": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "可选。结合上下文理解本轮用户真正要点的餐品，每项一个标准餐品名加数量，如 [\"麦辣鸡腿堡 2份\",\"中薯\"]；“刚才那个”“再来一份一样的”换成具体餐品，“不要麦辣的”这类否定的餐品不写，错别字写正确名称。本轮没提餐品就不传。utterance 仍逐字传原话。",
+          "title": "Foods"
         }
       },
       "required": [
@@ -1326,16 +1631,12 @@
   },
   {
     "name": "get_cart",
-    "description": "先在 assistant 正文发送 [打开点餐页](实际URL)，然后才能传 link_displayed=true 等待。\n\nlink_displayed 是必填声明：工具结果里的链接不算发送，必须先发一条含链接的\nassistant text，再在同一回合调用本工具。未发链接时传 false，按返回纠正交接。\n提交后按 next_tool 核价；超时继续等待，不重复链接、不催开页。\n",
+    "description": "读取会话里的点餐页状态：用户是否打开过页面、是否已提交。wait>0 时最多等 wait 秒（至多 25）让用户在页面里选好并提交；页面没被打开过时等待会缩短。",
     "inputSchema": {
       "properties": {
         "session_id": {
           "title": "Session Id",
           "type": "string"
-        },
-        "link_displayed": {
-          "title": "Link Displayed",
-          "type": "boolean"
         },
         "wait": {
           "default": 0,
@@ -1344,8 +1645,7 @@
         }
       },
       "required": [
-        "session_id",
-        "link_displayed"
+        "session_id"
       ],
       "title": "wait_cartArguments",
       "type": "object"
@@ -1355,6 +1655,34 @@
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_location",
+    "description": "用户同意浏览器定位后，等待定位页回传位置（最多 25 秒）。返回定位状态；定位成功且取餐方式已知时直接查附近门店。",
+    "inputSchema": {
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "wait": {
+          "default": 25,
+          "title": "Wait",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "title": "get_locationArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
     }
   },
   {

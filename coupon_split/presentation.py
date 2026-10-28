@@ -103,7 +103,7 @@ def quote_summary(plan, option_id="0"):
         coverage=[dict(name=names.get(c,c),quantity=q,basis='same_code') for c,q in p['coverage'].items()],
         extras=[dict(name=names.get(c,c),quantity=q) for c,q in p['extras'].items()],
         no_card={k:plan['no_card'][k] for k in ('option_id','price','savings')} if p.get('buys_card') and plan.get('no_card',{}).get('savings',0)>0 else None,
-        excluded_count=len(plan.get('exclusions',[])),next_tool='place_orders',
+        excluded_count=len(plan.get('exclusions',[])),
         reply_options=([{'n':i,'say':str(i),'does':v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐','take_way':v.get('code',v.get('takeWayCode'))} for i,v in enumerate(plan['take_options'],1)] if plan.get('take_options') else [{'n':1,'say':'1','does':'堂食并确认'},{'n':2,'say':'2','does':'外带并确认'}]) if plan.get('elements_pending') else [])
     return public(result)
 
