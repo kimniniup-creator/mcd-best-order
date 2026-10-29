@@ -105,19 +105,19 @@ def resolve(text,rows):
     if kind=='direct' and re.search('套餐|三件套',text) and not any('套餐' in a or '三件套' in a for a in entry['aliases']):
         packages=[r for r in rows if available(r) and re.search('套餐|件套',r['name']) and any(norm(t) in norm(r['name']) for t in entry['targets'])]
         if len(packages)==1:return dict(entry=entry,rows=packages,message='',selected=True)
-        if packages:return dict(entry=entry,rows=packages[:8],message='你说的对应几款套餐，请选：'+'、'.join(r['name'] for r in packages[:8]),selected=False)
+        if packages:return dict(entry=entry,rows=packages[:8],message='你说的对应几款套餐：'+'、'.join(r['name'] for r in packages[:8]),selected=False)
     targets,found=grounded(concept,rows,alias)
     selling=[r for r in found if available(r)]
     if concept.get('askAlways'):
         options=selling[:8] or [r for r in rows if available(r)][:4]
-        return dict(entry=entry,rows=options,message=f'你说的 {alias} 是指哪种？我这边能找到的是：'+('、'.join(r['name'] for r in options) or '暂无对应餐品')+'。请说明组合内容，不能沿用过期券包。',selected=False)
+        return dict(entry=entry,rows=options,message=f'你说的 {alias} 是指哪种？我这边能找到的是：'+('、'.join(r['name'] for r in options) or '暂无对应餐品')+'。组合内容需要用户说明，过期券包不能沿用。',selected=False)
     if kind in NOT_FOOD:
-        message=entry.get('note') or ('这是品牌称呼，不是餐品。你想吃麦当劳的什么？' if kind=='brand' else '这是活动称呼，不能沿用历史优惠。请先核对当前官方活动和门店券；你想吃什么餐品？')
+        message=entry.get('note') or ('这是品牌称呼，不是餐品；尚不知道用户想吃的餐品。' if kind=='brand' else '这是活动称呼，历史优惠不能沿用；当前官方活动和门店券需先核对，尚不知道用户想吃的餐品。')
         return dict(entry=entry,rows=selling[:8],message=message,selected=False)
     if not selling:
         options=alternatives(concept,rows)
-        message=f'你说的{alias}对应餐品在这家店当前菜单中不在售或今日售罄。可以换成：'+('、'.join(r['name'] for r in options) or '其他门店或时段的餐品')+'。你想换哪一种？'
-        return dict(entry=entry,rows=options,message=message,selected=False)
+        message=f'你说的{alias}对应餐品在这家店当前菜单中不在售或今日售罄。可以换成：'+('、'.join(r['name'] for r in options) or '其他门店或时段的餐品')+'。'
+        return dict(entry=entry,rows=options,message=message,selected=False,unavailable=True)
     card=card_prices(selling[:8]) if concept.get('cardVariant') else ''
     if asks(concept,alias,selling,rows):
         return dict(entry=entry,rows=selling[:8],message=f'你说的 {alias} 是指哪种？我这边能找到的是：'+'、'.join(r['name'] for r in selling[:8])+'。'+entry.get('note','')+card,selected=False)

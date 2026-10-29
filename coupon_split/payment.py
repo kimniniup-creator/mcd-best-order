@@ -23,7 +23,7 @@ def payment_state(plan, ua='', now=None):
     pending=len(orders)-paid-cancelled
     summary=f'部分完成：{paid} 笔已付，{cancelled} 笔已撤回' if paid and cancelled else f'已付款：{paid} 笔' if paid and not pending else f'已撤回：{cancelled} 笔' if cancelled and not pending else f'已付 {paid} 笔，还需支付 {pending} 笔' if paid else f'待付款：{pending} 笔'
     missing=[o for o in orders if o['state'] in {'expired','cancelled'}]
-    notice=('还缺：'+'、'.join(r['name']+' ×'+str(r['quantity']) for o in missing for r in o['items'])+'。要重新下这一笔吗？请先重新报价并确认。') if paid and cancelled else ''
+    notice=('还缺：'+'、'.join(r['name']+' ×'+str(r['quantity']) for o in missing for r in o['items'])+'。重新下这一笔需要先重新报价并确认。') if paid and cancelled else ''
     return dict(device=device,store=plan.get('storeName','所选门店'),orders=orders,payment_count=len(orders),dry_run=plan.get('dry_run',False),summary=summary,notice=notice,pending_count=pending)
 
 

@@ -148,7 +148,7 @@ class Service:
             if plan["state"] != "quoted":
                 return plan  # idempotency: replay never creates a second order
             if time.time() - plan["created"] > 600:
-                raise ValueError("报价已过期，请重新算价并确认")
+                raise ValueError("报价已过期")
             selected = next((p for p in plan["plans"] if p["option_id"] == option_id), None)
             if not selected:
                 raise ValueError("方案选项不存在")
@@ -263,10 +263,10 @@ class Service:
 
     def validate_before_place(self, plan, selected):
         if plan.get('elements_pending') or not plan.get('elements_validated'):
-            raise ValueError('订单要素未完整验证，请先选择堂食/外带')
+            raise ValueError('订单要素未完整验证：堂食/外带还没有选定')
         demand = plan.get('requested_items')
         if not demand or not isinstance(demand[0], dict):
-            raise ValueError('缺少原始规格需求，请重新报价')
+            raise ValueError('缺少原始规格需求')
         evidence = {e['evidence_id']: e for e in plan.get('evidence', [])}
         joined = []
         for order in selected['orders']:

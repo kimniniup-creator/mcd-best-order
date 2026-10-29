@@ -18,6 +18,13 @@ ADDRESS_ALIASES = MODEL['entities']['DeliveryAddress'].get('aliases', {})
 FILLER = re.compile(r'送到|送去|送至|送|外送|外卖|麦乐送|那个地址|那个|这个|地址|附近|我的|我|的|上次|之前|常用|老地方|就是|那边|那里|这里|里面|门口|地方|位置|吧|啊|呀|，|。|,|\s')
 
 
+def normalize_city(text):
+    """The city name upstream searches by: "浙江省杭州市", "省杭州", "杭州市" -> "杭州"."""
+    t = re.sub(r'\s', '', text or '')
+    t = re.sub(r'^.*(?:省|自治区)', '', t)
+    return t[:-1] if len(t) > 2 and t.endswith('市') else t
+
+
 def now_cn():
     return datetime.now(TZ)
 
@@ -76,7 +83,7 @@ def ground_time(when, store, now=None):
     try:
         target = datetime.strptime(at.strip(), '%Y-%m-%d %H:%M').replace(tzinfo=TZ)
     except ValueError:
-        return None, [violation('TIME_OUTSIDE_WINDOW', store=name, date=at or '?', time=at or '?', windows='请给出 YYYY-MM-DD HH:MM 形式的预约时间')]
+        return None, [violation('TIME_OUTSIDE_WINDOW', store=name, date=at or '?', time=at or '?', windows='预约时间的格式是 YYYY-MM-DD HH:MM')]
     if target <= now:
         return None, [violation('TIME_IN_PAST', time=at, now=now.strftime('%Y-%m-%d %H:%M'))]
     date = target.date().isoformat()
@@ -89,6 +96,21 @@ def ground_time(when, store, now=None):
 
 
 # ------------------------------------------------------------------- addresses
+
+DESCRIBES = re.compile(r'(?:末尾|结尾|尾部|最后|后面|开头|前面)(?:是|写着|写的是|为|有|带着|带)?|写着|写的是|叫做|名为|以前|之前|曾经|先前|早先|存过|保存过|保存的|存的|存下的|收藏的|那一个|那处|(?:吧|呢|啊|呀|哈|了)+$')
+
+
+def describing_words(hint):
+    """The distinctive text in a description of a saved address ("以前存过、末尾写着X的那个地方" -> "X").
+
+    Only wording that describes *which* address (where in it, that it was saved earlier) is peeled; the address text itself is kept.
+    """
+    text = re.sub(r'[\s，。,;；、]', '', hint or '')
+    if not DESCRIBES.search(text):
+        return hint or ''
+    text = DESCRIBES.sub('', text)
+    return re.sub(r'(?:的)?(?:那个|这个)?(?:地方|地址|位置)?$', '', text)
+
 
 def _cleaned(text):
     return FILLER.sub('', text or '')
@@ -104,6 +126,7 @@ def match_addresses(hint, addresses):
     Returns [(score, address)] best first. A synonym class (学校 -> 大学/校区 ...) counts
     for a match when the literal wording shares nothing with the saved text.
     """
+    hint = describing_words(hint)
     core = re.sub(r'[\s，。,;；、]', '', hint or '')
     scored = []
     for address in addresses:
@@ -130,6 +153,7 @@ def ground_address(hint, addresses):
     """(resolved_address | None, candidates, violations) for an address description."""
     if not addresses:
         return None, [], [violation('ADDRESS_NOT_SAVED', hint=hint or '', count=0)]
+    hint = describing_words(hint)
     if not _cleaned(hint):
         return None, list(addresses), []  # nothing said about which one: the user picks
     ranked = match_addresses(hint, addresses)

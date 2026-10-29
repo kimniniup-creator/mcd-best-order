@@ -30,7 +30,7 @@ def parse_cart(items):
             raise ValueError("商品格式应为 sku:数量，数量 1–20")
         result[canonical(code)] += int(qty)
     if not result or sum(result.values()) > 40:
-        raise ValueError("请选择 1–40 份餐品")
+        raise ValueError("餐品总数需在 1–40 份之间")
     return result
 
 
@@ -144,7 +144,7 @@ def delivery_fees(data):
             matches = [r for r in rows if fee_kind(r) == field]
             value = sum(r['subtotal'] for r in matches) if matches else (0 if field == 'packingPrice' else None)
         if type(value) is not int or value < 0:
-            raise ValueError('暂时无法确认'+('配送费' if field=='deliveryPrice' else '打包费')+'，请稍后重试')
+            raise ValueError('暂时无法确认'+('配送费' if field=='deliveryPrice' else '打包费')+'（上游没有返回有效值）')
         values[field] = value
     return values, rows
 
@@ -321,7 +321,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
                 except ValueError as exc:
                     if base.get('beType')==2 and '不可售' in str(exc):
                         labels=list(dict.fromkeys(names.get(i['productCode'],'所选餐品') for i in order['items']))
-                        raise ValueError('、'.join(labels)+'暂不支持这次外送，请换一道餐品或改为到店自取') from None
+                        raise ValueError('、'.join(labels)+'暂不支持这次外送；可行替代：换一道餐品，或改为到店自取') from None
                     raise
                 data = response["data"]
                 if not isinstance(data.get("price"), int) or data["price"] <= 0 or not validate_quantities(order, data):

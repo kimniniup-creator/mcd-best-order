@@ -30,8 +30,21 @@ class OrderElements(BaseModel):
             unknown=value.keys()-cls.model_fields.keys()-{'reservation_time','reservationTime'}
             if unknown:raise ValueError('未知 elements 键：'+'、'.join(sorted(unknown))+'；正确键名：'+'、'.join(cls.model_fields))
             times=[value[k] for k in ('reservationDate','reservation_time','reservationTime') if k in value]
-            if len(set(times))>1:raise ValueError('预约别名冲突，请只传正确键 reservationDate')
+            if len(set(times))>1:raise ValueError('预约别名冲突，只能用正确键 reservationDate')
         return value
+
+
+# Keys the server derives from other elements (the address text from addressId). They carry no source of their own
+# and must never be carried from one turn into the next, or sources would name a key nobody asserted.
+DERIVED = frozenset({'delivery_address'})
+
+
+def without_derived(elements):
+    """Copy of an elements dict with derived keys removed from the values and from sources."""
+    e = {k: v for k, v in (elements or {}).items() if k not in DERIVED}
+    if isinstance(e.get('sources'), dict):
+        e['sources'] = {k: v for k, v in e['sources'].items() if k not in DERIVED}
+    return e
 
 
 ALIASES = {'reservation_time': 'reservationDate', 'reservationTime': 'reservationDate'}
@@ -56,15 +69,17 @@ def normalize_elements(value):
     for alias, correct in ALIASES.items():
         if alias in value:
             if correct in value and value[correct] != value[alias]:
-                raise ValueError(f'{alias} 与正确键 {correct} 冲突，请只传 {correct}')
+                raise ValueError(f'{alias} 与正确键 {correct} 冲突，只能用 {correct}')
             value[correct] = value.pop(alias)
     unknown = value.keys() - OrderElements.model_fields.keys()
     if unknown:
         raise ValueError('未知 elements 键：' + '、'.join(sorted(unknown)) + '；正确键名：' + '、'.join(OrderElements.model_fields))
+    if isinstance(value.get('sources'), dict):  # a derived key has no source; naming one is harmless, never an error
+        value['sources'] = {k: v for k, v in value['sources'].items() if k not in DERIVED}
     sources = value.get('sources', {})
-    bad = set(sources) - (OrderElements.model_fields.keys() - {'sources', 'delivery_address'} | {'store_code'})
+    bad = set(sources) - (OrderElements.model_fields.keys() - {'sources'} - DERIVED | {'store_code'})
     if bad:
-        raise ValueError('sources 请使用正确的 elements 键名或 store_code；不认识：' + '、'.join(sorted(bad)))
+        raise ValueError('sources 只认 elements 的键名或 store_code；不认识：' + '、'.join(sorted(bad)))
     return OrderElements.model_validate(value).model_dump(exclude_unset=True)
 
 
@@ -78,8 +93,8 @@ def merge_elements(previous, incoming):
     for k, v in incoming.items():
         if k != 'sources':
             result[k] = v
-            if k != 'delivery_address':  # derived from addressId; it has no source of its own
+            if k not in DERIVED:  # derived from addressId; it has no source of its own
                 sources[k] = incoming.get('sources', {}).get(k, 'utterance')
     sources.update(incoming.get('sources', {}))
-    result['sources'] = sources
+    result['sources'] = {k: v for k, v in sources.items() if k not in DERIVED}
     return result

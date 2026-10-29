@@ -76,7 +76,7 @@
   },
   {
     "name": "resolve_order",
-    "description": "把你对用户原话的理解，按点餐本体的槽位（取餐方式、城市与地标或外送地址的说法、时间、餐品与规格、人数、忌口）传进来。\n服务端用账户已保存的地址、门店的营业与预约时段、实时菜单和官方规格逐项核对，返回：\nresolved（每个槽位的值和来源）、ambiguous（候选和区分候选要问的事实）、missing（必须问用户的槽位）、\nviolations（违反的约束：reason_code、事实、可行替代）、state 和 allowed_actions。\n用户没说的槽位不要填；可以重复调用，每次带上这一单完整的 foods。\n",
+    "description": "把你对用户原话的理解，按点餐本体的槽位（取餐方式、城市与地标或外送地址的说法、时间、餐品与规格、人数、忌口）传进来。\n服务端用账户已保存的地址、门店的营业与预约时段、实时菜单和官方规格逐项核对，返回：\nresolved（每个槽位的值和来源）、ambiguous（候选和区分候选要问的事实）、missing（必须问用户的槽位）、\nviolations（违反的约束：reason_code、事实、可行替代）、state 和 allowed_actions。\n用户没说的槽位留空；foods 是这一单完整的餐品清单，会替换之前的，可重复调用。\n",
     "inputSchema": {
       "$defs": {
         "Food": {
@@ -359,7 +359,7 @@
   },
   {
     "name": "get_menu",
-    "description": "浏览菜单。recommend=true 返回≤8KB宿主配餐上下文，不代配、不写购物车。\n由你阅读分页和条件、配主推+备选，再调用 propose_cart，展示后等用户认可再核价。\n",
+    "description": "浏览菜单。recommend=true 时返回配餐上下文（≤8KB 一页：人数、用户原话与预算、候选餐品的官方资料、分页状态、propose_cart 的校验口径），不生成方案、不写购物车。",
     "inputSchema": {
       "$defs": {
         "OrderElements": {
@@ -561,7 +561,7 @@
   },
   {
     "name": "propose_cart",
-    "description": "提交一个主推+一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。\n校验菜单、时段、忌口、官方选配和照原样价；错误按原因重配。成功只更新本地购物车，方案要等用户认可后才能报价。\n",
+    "description": "提交一个主推和一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。\n服务端校验菜单、时段、忌口、官方选配和照原样价，逐个方案返回通过与否及原因；成功只更新本地购物车，方案经用户认可后才可报价。\n",
     "inputSchema": {
       "properties": {
         "session_id": {
@@ -593,7 +593,7 @@
   },
   {
     "name": "simple_recommend",
-    "description": "仅网页无宿主模型时的简易规则推荐；对话请 get_menu(recommend=true) 后由宿主 propose_cart。",
+    "description": "无宿主模型的网页场景使用的简易规则推荐（不参考口味）。",
     "inputSchema": {
       "$defs": {
         "OrderElements": {
@@ -1556,7 +1556,7 @@
   },
   {
     "name": "mcd_start",
-    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）交给 place_orders，不要再调用本工具。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。\n",
+    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）由 place_orders 处理，不属于本工具。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。\n",
     "inputSchema": {
       "properties": {
         "utterance": {
@@ -1574,6 +1574,7 @@
             }
           ],
           "default": null,
+          "description": "用户明确要你配餐时才为 true；用户已说出具体餐品或黑话时不填",
           "title": "Recommend"
         },
         "plan": {
@@ -1591,6 +1592,7 @@
             }
           ],
           "default": null,
+          "description": "用户明确说了其中一种才填；用户只是说出餐品时不填",
           "title": "Plan"
         },
         "session_id": {

@@ -11,6 +11,9 @@ TEMPORAL = re.compile(rf'(?:{DATE})|(?:{PERIOD})|(?:{CLOCK})|预约|现在取|�
 UNSUPPORTED = r'大后天|下下(?:周|星期)|[上下]个?月|明年|明日|明晚|后晚|周末|月底|月末|小时|分钟后|秒|晚点|过会儿?|等下|等会儿?|稍后|一会儿?'
 
 
+NO_RESERVATION = re.compile(r'不(?:用|需要|必)?预约|无需预约|免预约|不要预约')
+
+
 class TimeClarification(ValueError):
     pass
 
@@ -37,15 +40,15 @@ def parse_time(text, now=None):
     clocks = list(re.finditer(CLOCK, text))
     dates = list(re.finditer(DATE, text))
     periods = re.findall(PERIOD, text)
-    immediate = bool(re.search(r'现在(?:取|送)|立即(?:取|送)|马上(?:取|送)', text))
+    immediate = bool(re.search(r'现在(?:取|送)|立即(?:取|送)|马上(?:取|送)', text)) or bool(NO_RESERVATION.search(text) and not clocks and not dates)
     unsupported=bool(re.search(UNSUPPORTED,text))
     mentioned = bool(clocks or dates or periods or '预约' in text or immediate or unsupported)
     if not mentioned: return False, None
     def ask():
-        raise TimeClarification('请说清楚预约日期和时间，例如“明天中午12点半”；几点是上午还是下午？')
+        raise TimeClarification('预约日期和时间不完整或有歧义（完整说法如“明天中午12点半”）；上午还是下午、哪一天需要明确。')
     if unsupported:ask()
     if immediate:
-        if clocks or dates or periods or ('预约' in text and not re.search(r'不预约|无需预约|不用预约',text)): ask()
+        if clocks or dates or periods or ('预约' in text and not re.search(NO_RESERVATION.pattern,text)): ask()
         return True, None
     if periods and not clocks and not dates and '预约' not in text:
         return False, None
@@ -94,5 +97,5 @@ def parse_time(text, now=None):
         ask()
     scheduled=datetime.combine(day,datetime.min.time()).replace(hour=hour,minute=minute,tzinfo=now.tzinfo)
     if scheduled <= now:
-        raise TimeClarification('这个时间已经过去了，请换一个时间；如果是明天取，请明确说“明天”。')
+        raise TimeClarification('这个时间已经过去了；指明天时需要明确说“明天”。')
     return True, day.isoformat() + f' {hour:02d}:{minute:02d}'

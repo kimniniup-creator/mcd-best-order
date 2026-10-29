@@ -62,10 +62,11 @@ def intent_text(utterance):
 
 
 class AmbiguousIntent(ValueError):
-    def __init__(self, rows, message=''):
+    def __init__(self, rows, message='', unavailable='' ):
         self.options = rows[:8]
+        self.unavailable = unavailable  # the phrase whose own item is not selling; the rows are replacements
         numbered='\n'.join(f"{n} {r['name']}　¥{r['price_yuan']}" for n,r in enumerate(self.options,1))
-        super().__init__((message+'\n'+numbered).rstrip() if message else '你说的对应几款餐品，请选编号：\n'+numbered)
+        super().__init__((message+'\n'+numbered).rstrip() if message else '你说的对应以下几款餐品：\n'+numbered)
 
 
 def resolve_intent(utterance, rows):
@@ -76,7 +77,7 @@ def resolve_intent(utterance, rows):
     for part in filter(None, parts):
         from coupon_split.slang import resolve,available
         slang=resolve(part,rows)
-        if slang and not slang['selected']:raise AmbiguousIntent(slang['rows'],slang['message'])
+        if slang and not slang['selected']:raise AmbiguousIntent(slang['rows'],slang['message'],slang['entry']['matched_alias'] if slang.get('unavailable') else '')
         ranked = slang['rows'] if slang else matches(intent_text(part), [r for r in rows if available(r)]) if intent_text(part) else []
         if ranked:
             if slang:

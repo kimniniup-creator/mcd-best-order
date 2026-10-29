@@ -153,7 +153,7 @@ def order_context(store, elements, require_take=True):
     if mode not in ('pickup','drive','delivery'):
         missing.append('有效履约方式')
     if missing:
-        labels={'fulfillment':'取餐或配送方式','account_name':'账户信息，请刷新后重试','account_last4':'账户信息，请刷新后重试','takeWayCode':'堂食或外带','addressId':'配送地址','有效履约方式':'取餐或配送方式'}
+        labels={'fulfillment':'取餐或配送方式','account_name':'账户信息','account_last4':'账户信息','takeWayCode':'堂食或外带','addressId':'配送地址','有效履约方式':'取餐或配送方式'}
         raise ValueError('只需补充：'+ '、'.join(dict.fromkeys(labels[k] for k in missing)))
     if len(str(elements['account_last4']))!=4:
         raise ValueError('账户号后四位格式无效')
@@ -162,7 +162,7 @@ def order_context(store, elements, require_take=True):
                'needTableware':bool(elements.get('needTableware',False))}
     if be_type != 1:
         if not store.get('beCode'):
-            raise ValueError('请重新查询并选择支持这种取餐方式的门店')
+            raise ValueError('这家门店没有这种取餐方式（缺 beCode）')
         context['beCode'] = store['beCode']
     date = elements.get('reservationDate')
     if date:
@@ -179,6 +179,6 @@ def order_context(store, elements, require_take=True):
             ranges=[human_time(o['date']+' 00:00').split(' ')[0]+' '+o['reservationOptionText'] for o in options if o.get('date') and o.get('reservationOptionText')]
             if not ranges:
                 ranges=[human_time(v) for v in values(options) if isinstance(v,str) and len(v)==16 and v[10]==' ']
-            raise ValueError('这个时间暂时不能预约。'+('可选时段：'+'；'.join(ranges) if ranges else '这家店暂未开放预约，请换一家店或选择现在取。'))
+            raise ValueError('这个时间暂时不能预约。'+('可选时段：'+'；'.join(ranges) if ranges else '这家店暂未开放预约。'))
         context['reservationDate'] = date
     return context

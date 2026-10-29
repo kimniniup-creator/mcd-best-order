@@ -17,7 +17,7 @@ from coupon_split.menu import AmbiguousIntent, default_item, menu_rows, normaliz
 from coupon_split.timeparse import TimeClarification, parse_time
 
 FULFILLMENT = onto.MODEL['entities']['Fulfillment']['values']
-ADDRESS_HINT = re.compile(r'(?:送到|送去|送至|送往|外送到|外卖到|配送到|地址是|地址在)([^，。,；！!？?]+)')
+ADDRESS_HINT = re.compile(r'(?:送到|送去|送至|送往|外送到|外卖到|配送到|地址是|地址在|地址(?:改成|改为|换成|换到|改到))([^，。,；！!？?]+)')
 
 
 class Food(BaseModel):
@@ -94,6 +94,8 @@ def ground_phrase(phrase, rows):
     if slang:
         if slang['selected']:
             return 'ok', slang['rows'][0], {}
+        if slang.get('unavailable'):  # the named item is not selling here; the rows are replacements, not what the user asked for
+            return 'violation', 'ITEM_SOLD_OUT', {'phrase': phrase, 'alternatives': '、'.join(r['name'] for r in slang['rows']) or '无'}
         if slang['entry']['kind'] in NOT_FOOD:
             return 'violation', 'ITEM_NOT_FOOD', {'phrase': phrase, 'note': slang['message']}
         selling = [r for r in slang['rows'] if available(r)]
@@ -133,6 +135,7 @@ async def ground_foods(s, t, e, store_code, store_name, foods, utterance=''):
         for marker in grounding.size_markers(core):  # "中薯条" is the item 薯条 asked in size 中
             core = core.replace(marker, '', 1)
             extra = extra + [marker]
+        core = {'薯': '薯条'}.get(core, core)  # "中薯" is how people say 中薯条
         if extra and core and not official:
             outcome = ground_phrase(core, rows)
             if outcome[0] == 'violation' and outcome[1] == 'ITEM_NOT_FOUND':

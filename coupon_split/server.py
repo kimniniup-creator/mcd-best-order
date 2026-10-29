@@ -6,6 +6,7 @@ import contextvars
 import io
 import logging
 import os
+import re
 from pathlib import Path
 import secrets
 import time
@@ -21,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from coupon_split.optimizer import DEFAULT_CART, atom, validate_quantities
-from coupon_split.elements import OrderElements, normalize_elements, merge_elements, utterance_elements
+from coupon_split.elements import OrderElements, normalize_elements, merge_elements, utterance_elements, without_derived, DERIVED
 from coupon_split.menu import menu_rows, matches, intent_text, resolve_intent, default_item, recommend_rows, AmbiguousIntent
 from coupon_split.presentation import markdown, public, money, distance, quote_summary, option_difference
 from coupon_split.service import Service, owner, deadline, Withdrawn
@@ -95,13 +96,28 @@ def agent_block(data):
 TERMINAL_STATES={name for name,spec in onto.STATES.items() if spec.get('terminal')}
 
 
+def conversation_cart():
+    """The signed-in account's current cart in this conversation, for tools that carry no session_id of their own."""
+    try:
+        cart=carts.get(memory.read(owner(token())).get('active_session',''))
+    except Exception:return None
+    return cart if cart and cart.get('conversation_id')==conversation_id else None
+
+
 def order_state(data):
     """Where the order is in the ontology's state graph, and which tools are possible from there."""
     plan_state=data.get('state')
     if plan_state in onto.STATES:node=plan_state
     else:
         cart=carts.get(data['session_id']) if data.get('session_id') else None
+        if cart is None and not data.get('session_id'):cart=conversation_cart()
         node=onto.state_name(cart=cart)
+        if cart and cart.get('pending_plan_id') and node=='items_ready':
+            # the cart's own quote: the session is where that quote is, not merely "items chosen"
+            try:
+                quoted=service.load(cart['pending_plan_id'],token())['state']
+                if quoted=='quoted':node=quoted;data=dict(data,plan_id=cart['pending_plan_id'])  # only a live quote; a finished order is not this cart's state
+            except Exception:pass
     return node,onto.allowed_actions(node,has_plan=bool(data.get('plan_id')))
 
 
@@ -154,6 +170,7 @@ async def lookup_stores(t, fulfillment, city="", keyword="", address_id=""):
     if fulfillment == "delivery":
         r = await upstream.call(t, "delivery-query-stores", {"addressId":address_id,"beType":2})
     else:
+        city = grounding.normalize_city(city)
         r = await upstream.call(t, "query-nearby-stores", {"city":city,"keyword":keyword,"beType":5 if fulfillment=="drive" else 1,"searchType":2})
     stores = r["data"] if isinstance(r["data"],list) else r["data"].get("stores",[])
     stores = sorted(stores,key=lambda s:float(s.get("distance") or 1e12))[:5]
@@ -196,7 +213,7 @@ async def settle_cart(cart, sid, data, text):
     if cart.get('plan')=='我自己点':
         page=await picker_page(cart,sid)
         data.update(picker_url=page,order_url=page,links={'picker_url':page},stage='pick')
-        text+=f'\n[打开点餐页]({page}) — 选好点底部“选好了，去算最省”，选好会自动接着算；如果没接上，回来说一句“好了”。'
+        text+=f'\n点餐页：[打开点餐页]({page})。页面底部“选好了，去算最省”按钮提交选择，提交后 get_cart 读得到；用户说“好了”时服务端也会去读页面状态。'
     return data,text
 
 
@@ -205,15 +222,15 @@ async def find_store(city: str, keyword: str = "", fulfillment: Literal['pickup'
     """按城市、地标和取餐方式查门店；外送按账户已保存的地址（address_id）查。不从地址簿擅自推断用户想外送。"""
     keyword = keyword or location
     if fulfillment!='delivery' and not city.strip():
-        return result({'stage':'ask','missing':['city'],'location':keyword},'门店查询需要城市，用户的话里还没有确定。')
+        return result({'stage':'ask','missing':['city'],'location':keyword,**({'session_id':session_id} if session_id else {})},'门店查询需要城市，用户的话里还没有确定。')
     if fulfillment!='delivery' and not keyword:
-        return result({'stage':'ask','missing':['where']},'还不知道用户在哪个地标、小区或街道附近。')
+        return result({'stage':'ask','missing':['where'],**({'session_id':session_id} if session_id else {})},'还不知道用户在哪个地标、小区或街道附近。')
     t=token()
     if not session_id:
         candidate=memory.read(owner(t)).get('active_session','')
         if candidate and carts.get(candidate):session_id=candidate
     stores=await lookup_stores(t,fulfillment,city,keyword,address_id)
-    text = ('最近的是 **'+stores[0]['storeName']+'**'+(' · '+stores[0]['distance'] if stores[0]['distance'] else '')+'，可换一家。') if stores else '这个地点暂时没有可用门店，请换个附近地标。'
+    text = ('最近的是 **'+stores[0]['storeName']+'**'+(' · '+stores[0]['distance'] if stores[0]['distance'] else '')+'，可换一家。') if stores else '这个地点暂时没有可用门店。'
     data = {'stores':[public_store(s) for s in stores],
             'default_store':public_store(stores[0]) if stores else None,
             'stage':'ask'}
@@ -234,6 +251,7 @@ async def find_store(city: str, keyword: str = "", fulfillment: Literal['pickup'
             data, text = await settle_cart(cart, session_id, data, text)
         else:
             cart.update(store_code=None, location=keyword, city=city)
+            data['session_id']=session_id
         carts[session_id]=cart
     return result(data,text)
 
@@ -244,7 +262,7 @@ async def resolve_order(utterance: Annotated[str, Field(description='逐字复�
     服务端用账户已保存的地址、门店的营业与预约时段、实时菜单和官方规格逐项核对，返回：
     resolved（每个槽位的值和来源）、ambiguous（候选和区分候选要问的事实）、missing（必须问用户的槽位）、
     violations（违反的约束：reason_code、事实、可行替代）、state 和 allowed_actions。
-    用户没说的槽位不要填；可以重复调用，每次带上这一单完整的 foods。
+    用户没说的槽位留空；foods 是这一单完整的餐品清单，会替换之前的，可重复调用。
     """
     t=token();state=memory.read(owner(t))
     sid=session_id if session_id and carts.get(session_id) and carts[session_id]['owner']==owner(t) else ''
@@ -259,6 +277,11 @@ async def resolve_order(utterance: Annotated[str, Field(description='逐字复�
     memory.write(owner(t),dict(state,active_session=sid))
     report=await orderflow.apply(sys.modules[__name__],t,sid,interpretation.model_dump(),utterance)
     cart=carts[sid]
+    if not cart.get('items') and cart.get('intent') and not cart.get('intent_resolved') and cart.get('store_code') and not cart.get('pending_foods'):
+        # a food named in an earlier sentence (without foods) waits for the store; now there is one
+        await resolve_cart_intent(cart,t)
+        cart=carts[sid]
+        report['violations']=report['violations']+[v for v in cart.get('violations',[]) if v not in report['violations']]
     lines=[]
     for slot,entry in report['resolved'].items():
         value=entry['value']
@@ -273,21 +296,21 @@ async def resolve_order(utterance: Annotated[str, Field(description='逐字复�
     if not open_facts and not cart['items'] and cart.get('store_code') and cart.get('plan')=='我自己点':
         page=await picker_page(cart,sid)
         data.update(picker_url=page,order_url=page,links={'picker_url':page})
-        text+=f'\n[打开点餐页]({page}) — 选好点底部“选好了，去算最省”，选好会自动接着算；如果没接上，回来说一句“好了”。'
+        text+=f'\n点餐页：[打开点餐页]({page})。页面底部“选好了，去算最省”按钮提交选择，提交后 get_cart 读得到；用户说“好了”时服务端也会去读页面状态。'
     return result(data,text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def get_menu(store_code: str, search: str = "", offset: int = 0, elements: OrderElements | None = None, people: int | None = None, recommend: bool = False, session_id: str = "") -> CallToolResult:
-    """浏览菜单。recommend=true 返回≤8KB宿主配餐上下文，不代配、不写购物车。
-    由你阅读分页和条件、配主推+备选，再调用 propose_cart，展示后等用户认可再核价。
-    """
+    """浏览菜单。recommend=true 时返回配餐上下文（≤8KB 一页：人数、用户原话与预算、候选餐品的官方资料、分页状态、propose_cart 的校验口径），不生成方案、不写购物车。"""
     if recommend:
         from coupon_split.meal_planning import context
         import sys
         return await context(sys.modules[__name__],store_code,session_id,people,offset)
     t = token()
     cart = owned_cart(session_id) if session_id else None
+    def reply(data, text):  # a result for a session carries the session, so its state is the session's own
+        return result(dict(data, session_id=session_id) if session_id else data, text)
     elements = normalize_elements(elements or (cart['elements'] if cart else {}))
     if elements and (not elements.get('account_name') or not elements.get('account_last4')):
         a=(await account_info()).structuredContent
@@ -300,7 +323,7 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
         from coupon_split.slang import resolve
         slang=resolve(search,rows)
         if slang and not slang['selected']:
-            return result({'items':slang['rows'],'selected_items':[],'slang_kind':slang['entry']['kind'],'stage':'ask'},slang['message'])
+            return reply({'items':slang['rows'],'selected_items':[],'slang_kind':slang['entry']['kind'],'stage':'ask'},slang['message'])
         rows=slang['rows'] if slang else matches(search,rows)
     page=rows[max(0,offset):max(0,offset)+8]
     selected=[]
@@ -308,12 +331,12 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
         cart['store_code']=store_code
         await resolve_cart_intent(cart,t,menu)
         if cart.get('intent_question'):
-            return result({'stage':'ask','session_id':session_id,'selected_items':[],'reply_options':cart['intent_options']},cart['intent_question'])
+            return reply({'stage':'ask','session_id':session_id,'selected_items':[],'reply_options':cart['intent_options']},cart['intent_question'])
         selected=cart['items']
     elif search and offset==0:
         try:resolved=resolve_intent(search,rows)
         except AmbiguousIntent as exc:
-            return result({'items':exc.options,'reply_options':[{'n':n,'does':r['name'],'productCode':r['productCode']} for n,r in enumerate(exc.options,1)],'stage':'pick'},str(exc))
+            return reply({'items':exc.options,'reply_options':[{'n':n,'does':r['name'],'productCode':r['productCode']} for n,r in enumerate(exc.options,1)],'stage':'pick'},str(exc))
         for item in resolved:
             detail=(await upstream.call(t,'query-meal-detail',dict(base,code=item['productCode'])))['data']
             selected.append(default_item(detail,item['quantity']))
@@ -328,13 +351,13 @@ async def get_menu(store_code: str, search: str = "", offset: int = 0, elements:
     while len(json.dumps(data,ensure_ascii=False).encode())+len(text.encode())*2>3700 and len(compact)>1:
         compact.pop();data['next_offset']=offset+len(compact)
         text='这家店现在的菜单（也可以直接说名称和数量）：\n'+'\n'.join(menu_line(n,r) for n,r in enumerate(compact,1))
-    return result(data,text)
+    return reply(data,text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def propose_cart(session_id: str, options: list[dict]) -> CallToolResult:
-    """提交一个主推+一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。
-    校验菜单、时段、忌口、官方选配和照原样价；错误按原因重配。成功只更新本地购物车，方案要等用户认可后才能报价。
+    """提交一个主推和一个备选：[{title,reason,items:[{productCode,quantity,roundList?,modification?}]}]。
+    服务端校验菜单、时段、忌口、官方选配和照原样价，逐个方案返回通过与否及原因；成功只更新本地购物车，方案经用户认可后才可报价。
     """
     import sys
     from coupon_split.meal_planning import propose
@@ -343,7 +366,7 @@ async def propose_cart(session_id: str, options: list[dict]) -> CallToolResult:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def simple_recommend(store_code: str, people: int | None = None, elements: OrderElements | None = None) -> CallToolResult:
-    """仅网页无宿主模型时的简易规则推荐；对话请 get_menu(recommend=true) 后由宿主 propose_cart。"""
+    """无宿主模型的网页场景使用的简易规则推荐（不参考口味）。"""
     import sys
     from coupon_split.meal_planning import simple
     return await simple(sys.modules[__name__],store_code,people,elements)
@@ -387,28 +410,28 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
         items,store_code=copy.deepcopy(active['items']),store_code or active.get('store_code') or ''
     if not items or not store_code:raise ValueError('缺少餐品或门店：先传 items 和 store_code，或传已确定餐品和门店的 session_id')
     if active and active.get('recommendation_pending'):
-        raise ValueError('配餐方案尚未获用户认可；先展示主推和备选，等用户说“就这样”或“换备选”后调用 mcd_start，再核价')
+        raise ValueError('配餐方案尚待用户认可（服务端认得的回答是“就这样”“换备选”）；认可前不能报价')
     previous=state.get('elements',{})
     if active and active['owner']==owner(t):
         previous=active['elements']
         for key,value in previous.items():
-            if key!='sources' and key not in incoming:
+            if key!='sources' and key not in incoming and key not in DERIVED:
                 incoming[key]=value
-                if key!='delivery_address':incoming.setdefault('sources',{})[key]=previous.get('sources',{}).get(key,'default')
+                incoming.setdefault('sources',{})[key]=previous.get('sources',{}).get(key,'default')
     elements=merge_elements(previous,incoming)
     selected_store=get_store_context(t,store_code)
     if selected_store.get('fulfillment') and selected_store['fulfillment']!=elements.get('fulfillment'):
         labels={'pickup':'到店自取','drive':'得来速','delivery':'麦乐送'}
-        raise ValueError(('本次传入的方式' if explicit_mode else '沿用的方式')+'“'+labels.get(elements.get('fulfillment'),'所选方式')+'”与这家店的查询方式“'+labels.get(selected_store['fulfillment'],'门店方式')+'”不符，请按本次方式重新查询门店。')
+        raise ValueError(('本次传入的方式' if explicit_mode else '沿用的方式')+'“'+labels.get(elements.get('fulfillment'),'所选方式')+'”与这家店的查询方式“'+labels.get(selected_store['fulfillment'],'门店方式')+'”不符。')
     # Model-provided sources are never evidence of what the user said.
     trusted=previous.get('sources',{})
     for key,value in elements.items():
-        if key in {'sources','delivery_address'}:continue  # the address text is derived from addressId at quote time; it has no source of its own
+        if key=='sources' or key in DERIVED:continue  # the address text is derived from addressId at quote time; it has no source of its own
         elements['sources'][key]=(trusted.get(key,'default') if active and previous.get(key)==value else
             (trusted.get(key) if trusted.get(key) in {'default','nearest','account'} else 'last') if key in previous and previous[key]==value else 'default')
     official=(await account_info()).structuredContent
     if incoming.get("account_last4") and incoming["account_last4"]!=official["account_last4"]:
-        raise ValueError("账户后四位与本机授权账户不一致，请刷新账户信息")
+        raise ValueError("账户后四位与本机授权账户不一致")
     elements['account_last4']=official['account_last4']
     elements['account_name']=official['account_name']
     elements['sources']['account_name']='account'
@@ -419,7 +442,7 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
         addresses=(await upstream.call(t,'delivery-query-addresses',{}))['data']
         addresses=addresses if isinstance(addresses,list) else addresses.get('addresses',[])
         address=next((a for a in addresses if str(a.get('addressId'))==str(elements.get('addressId'))),None)
-        if not address:raise ValueError('配送地址不属于本账户，请重新选择')
+        if not address:raise ValueError('配送地址不属于本账户')
         elements=dict(elements,delivery_address=address.get('fullAddress',address.get('address','')))
     context=order_context(get_store_context(t,store_code),elements,require_take=False)
     if items and isinstance(items[0],dict) and 'item' in items[0]:
@@ -435,7 +458,7 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
         selected=next((r for r in take_options if take==r.get('code',r.get('takeWayCode'))),{})
         elements['takeWayName']=selected.get('name') or selected.get('takeWayName') or selected.get('title') or {'eat-in':'堂食','take-in-store':'外带'}.get(take,'所选取餐方式')
     if take and context["beType"] != 2 and any(take not in {r.get("code",r.get("takeWayCode")) for r in o["takeWayList"]} for p in plan["plans"] for o in p["orders"]):
-        raise ValueError("请选择本次计价返回的堂食/外带方式")
+        raise ValueError("堂食/外带方式必须是本次计价返回的选项之一")
     pending=['takeWayCode'] if context['beType']!=2 and not take else []
     plan.update(order_elements=elements,elements_pending=pending,elements_validated=not pending,selected_specifications=selected_specs)
     previous=memory.read(owner(t))
@@ -497,7 +520,7 @@ async def prepare_place(t, plan, option_id, confirm_token, take_way=''):
     if take_way:
         import hmac
         if not hmac.compare_digest(confirm_token,plan['confirm_token']):raise ValueError('确认凭证不匹配')
-        if any(take_way not in {v.get('code',v.get('takeWayCode')) for v in o['takeWayList']} for o in selected['orders']):raise ValueError('请选择本次官方堂食/外带选项')
+        if any(take_way not in {v.get('code',v.get('takeWayCode')) for v in o['takeWayList']} for o in selected['orders']):raise ValueError('堂食/外带方式必须是本次官方返回的选项之一')
         plan['order_elements']['takeWayCode']=take_way
         plan['order_elements']['sources']['takeWayCode']='utterance'
         plan.update(elements_pending=[],elements_validated=True);service.save(plan)
@@ -596,7 +619,7 @@ async def withdraw_by_words(t, plan, option_id):
     plan,count=await withdraw_now(t,plan)
     if plan['state']=='quoted':
         # Nothing exists yet: refuse the call. The plan stays quoted; a later explicit confirmation starts afresh.
-        raise ValueError('用户表示不下单或要先等一等，订单没有创建，之前的确认页已作废（作废 %d 个）。方案还保留着。请先在对话中明确确认下单：用户重新说“确认”后才会重新开始，在那之前不要再调用 place_orders。'%count)
+        raise ValueError('用户表示不下单或要先等一等，订单没有创建，之前的确认页已作废（作废 %d 个）。方案还保留着；用户重新明确确认（说“确认下单”）后才会重新开始。'%count)
     note=withdrawal_text(plan)
     data=dict(public(plan),withdrawn=True)
     return result(data,note+'\n\n'+markdown(plan))
@@ -615,9 +638,9 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
         # M03: a wrong credential or an expired quote is refused on the very first call, before any confirmation page exists.
         import hmac
         if not hmac.compare_digest(str(confirm_token),plan['confirm_token']):
-            raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。请重新调用 quote_best 获取新报价，再让用户确认。')
+            raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。')
         if time.time()-plan['created']>600:
-            raise ValueError('报价已过期（超过 10 分钟），价格和优惠可能已变。请重新调用 quote_best 获取新报价，再让用户确认。')
+            raise ValueError('报价已过期（超过 10 分钟），价格和优惠可能已变；确认凭证只对应当次报价。')
         failure=confirmations.take_failure(owner(t),plan_id)
         if failure:raise ValueError(failure)
         # 3: a live confirmation page exists, the click authorises (words must not contradict it);
@@ -639,7 +662,7 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
             if '授权失效' not in str(exc):raise
             # Dead account authorisation is reported now, with the page that fixes it, not at some later step.
             url=await local_url()
-            return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'麦当劳账户授权已失效，订单没有创建。请重新连接：[打开授权页]({url}/setup)。保存后回来说“好了”，再重新报价确认。')
+            return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'麦当劳账户授权已失效，订单没有创建。授权页：[打开授权页]({url}/setup)；授权保存后需要重新报价和确认。')
         pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation,**({'_amount_note':amount_note} if amount_note else {})),claim)
         if pending is not None:return pending
     # 2: not quoted any more means the click already placed it; this only reads the result back.
@@ -658,7 +681,7 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
     try:
         plan = await finish_place(t,plan_id,confirm_token,option_id,key)
     except Withdrawn:
-        raise ValueError('用户表示不下单，订单没有创建。方案还保留着；用户重新明确确认后才会重新开始。')
+        raise ValueError('用户表示不下单，订单没有创建。方案还保留着；用户重新明确确认（说“确认下单”）后才会重新开始。')
     data=public(plan)
     if plan.get('dry_run'):data.update(payment_wait_skipped=True)
     return result(data,markdown(plan))
@@ -738,7 +761,7 @@ async def preview_selection(store_code: str, items: list[dict], elements: OrderE
     context=order_context(get_store_context(t,store_code),elements,require_take=False)
     await validate_selected(t,store_code,items,context,fill_defaults=True)
     r=await upstream.call(t,"calculate-price",dict(context,storeCode=store_code,items=items))
-    return result({"takeWayList":r["data"].get("takeWayList",[]),"price":r["data"]["price"]},"请选择本次官方返回的取餐方式。")
+    return result({"takeWayList":r["data"].get("takeWayList",[]),"price":r["data"]["price"]},"本次官方返回的取餐方式如上。")
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
@@ -815,7 +838,7 @@ async def validate_selected(t, store, items, context, fill_defaults=False):
             seen=set()
             mods=selection.get('modification',{})
             if not isinstance(mods,dict) or not isinstance(mods.get('values',[]),list):
-                raise ValueError('特制项格式不对：应为 {"values":[{"code":..,"key":..,"quantity":..}]}；规格词（去冰、大杯等）请交给 resolve_order 的 foods[].spec，由服务端按官方选项落地')
+                raise ValueError('特制项格式不对：应为 {"values":[{"code":..,"key":..,"quantity":..}]}；规格词（去冰、大杯等）由 resolve_order 的 foods[].spec 表达，服务端按官方选项落地')
             for mod in mods.get('values',[]):
                 pair=(str(mod.get('code')),str(mod.get('key')))
                 if pair not in allowed or pair in seen or not isinstance(mod.get('quantity'),int) or not 0<=mod['quantity']<=allowed[pair][1]:
@@ -871,9 +894,23 @@ async def resolve_cart_intent(cart,t,menu=None):
     menu=menu or (await upstream.call(t,'query-meals',base))['data']
     try:selected=resolve_intent(cart['intent'],menu_rows(menu))
     except AmbiguousIntent as exc:
+        if exc.unavailable:
+            cart.update(violations=cart.get('violations',[])+[onto.violation('ITEM_SOLD_OUT',phrase=exc.unavailable,alternatives='、'.join(r['name'] for r in exc.options) or '无')],items=[],intent_resolved=False)
+            return
         cart.update(intent_question=str(exc),intent_options=[{'n':n,'does':r['name'],'productCode':r['productCode']} for n,r in enumerate(exc.options,1)])
         return
     if selected:
+        # Spec words the user said ("去冰", "大杯") are never silently dropped on this path either.
+        words=list(dict.fromkeys(re.findall(grounding.SPEC_TOKEN,cart['intent'])+[m+'份' for m in grounding.size_markers(cart['intent']) if not any(m in w for w in re.findall(grounding.SPEC_TOKEN,cart['intent']))]))
+        if words and len(selected)==1:
+            code=selected[0]['productCode']
+            detail=(await upstream.call(t,'query-meal-detail',dict(base,code=code)))['data']
+            name=next((r['name'] for r in menu_rows(menu) if r['productCode']==code),'')
+            item,applied,problems=grounding.apply_specs(default_item(detail,selected[0]['quantity']),detail,words,phrase=name,name=name)
+            if problems:
+                cart.update(violations=cart.get('violations',[])+problems,items=[],intent_resolved=False)
+                return
+            selected=[item]
         await validate_selected(t,store,selected,context,fill_defaults=True)
         cart.pop('intent_question',None);cart.pop('intent_options',None)
         from coupon_split.slang import card_prices
@@ -907,11 +944,11 @@ async def local_url():
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 @start_guidance
-async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: bool | None = None, plan: Literal['帮我配','我自己点','照上次那份'] | None = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮传前一轮返回的 session_id（否则开启新会话，丢失人数、预算、忌口）；全新对话留空。')] = "", foods: Annotated[list[str] | None, Field(description='可选。结合上下文理解本轮用户真正要点的餐品，每项一个标准餐品名加数量，如 ["麦辣鸡腿堡 2份","中薯"]；“刚才那个”“再来一份一样的”换成具体餐品，“不要麦辣的”这类否定的餐品不写，错别字写正确名称。本轮没提餐品就不传。utterance 仍逐字传原话。')] = None) -> CallToolResult:
+async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: Annotated[bool | None, Field(description='用户明确要你配餐时才为 true；用户已说出具体餐品或黑话时不填')] = None, plan: Annotated[Literal['帮我配','我自己点','照上次那份'] | None, Field(description='用户明确说了其中一种才填；用户只是说出餐品时不填')] = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮传前一轮返回的 session_id（否则开启新会话，丢失人数、预算、忌口）；全新对话留空。')] = "", foods: Annotated[list[str] | None, Field(description='可选。结合上下文理解本轮用户真正要点的餐品，每项一个标准餐品名加数量，如 ["麦辣鸡腿堡 2份","中薯"]；“刚才那个”“再来一份一样的”换成具体餐品，“不要麦辣的”这类否定的餐品不写，错别字写正确名称。本轮没提餐品就不传。utterance 仍逐字传原话。')] = None) -> CallToolResult:
     """开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。
     服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；
     返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。
-    报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）交给 place_orders，不要再调用本工具。
+    报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）由 place_orders 处理，不属于本工具。
     缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。
     """
     import re
@@ -940,7 +977,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     except ValueError as exc:
         if '授权失效' not in str(exc):raise
         memory.write('onboarding',{'utterance':utterance})
-        return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'麦当劳账户授权已失效，请重新连接：[打开授权页]({url}/setup)。保存后回来说“好了”，继续点餐。')
+        return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'麦当劳账户授权已失效。授权页：[打开授权页]({url}/setup)；保存后用户说“好了”可接着原来的点餐。')
     onboarding=memory.read('onboarding')
     if onboarding.get('utterance') and utterance.strip().strip('。！!')=='好了':
         memory.write('onboarding',{})
@@ -950,6 +987,9 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if onboarding.get('utterance'):
         memory.write('onboarding',{})
     t=token();state=memory.read(owner(t))
+    named=carts.get(session_id) if session_id else None
+    if named and named['owner']==owner(t) and session_id!=state.get('active_session',''):
+        state['active_session']=session_id  # the session the host names is the one being continued, whichever was remembered last
     existing=carts.get(state.get('active_session',''))
     from coupon_split import confirmation as cf
     if cf.classify(utterance)[0]=='confirm':
@@ -989,17 +1029,19 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         if re.fullmatch(r'(?:不用|不要|不开|别|不想)(?:打开)?定位(?:了)?',answer):
             existing.update(locate_offered=False,last_utterance=utterance)
             return result({'stage':'ask','missing':['where'],'session_id':sid},'好，那直接说个地标、小区或街道就行。')
+    # "照旧" names the previous order only when it is not describing a slot of this one ("地址照旧", "其他都照旧").
+    again=r'照上次|(?<!地址)(?<!餐品)(?<!时间)(?<!方式)(?<!门店)(?<!其他)(?<!别的)(?<!其余)(?<!都)(?<!也)照旧'
     last_order=state.get('last_order',{})
     previous=copy.deepcopy(last_order)
     active=carts.get(state.get('active_session',''))
-    resume_requested=bool(re.search(r'照上次|照旧|继续刚才|接着点刚才那个|接着用',utterance) or (utterance.strip().isdigit() and plan=='照上次那份'))
+    resume_requested=bool(re.search(again+r'|继续刚才|接着点刚才那个|接着用',utterance) or (utterance.strip().isdigit() and plan=='照上次那份'))
     # An empty new cart must not replace the last unfinished selection.
-    if resume_requested and not re.search(r'照上次|照旧',utterance) and (not active or not active.get('items')):
+    if resume_requested and not re.search(again,utterance) and (not active or not active.get('items')):
         pending=carts.get(state.get('pending_session',''))
         if pending and pending['owner']==owner(t) and pending.get('items'):
             state['active_session']=state['pending_session'];active=pending
     continuing=bool(active and (active.get('conversation_id')==conversation_id or resume_requested or session_id==state.get('active_session'))
-        and not re.search(r'重新点|新的一单|再下一单|照上次|照旧|(?:我要吃|帮我点个)麦当劳',utterance))
+        and not re.search(r'重新点|新的一单|再下一单|(?:我要吃|帮我点个)麦当劳|'+again,utterance))
     if not continuing and not resume_requested:
         previous={}
 
@@ -1020,7 +1062,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     from coupon_split.timeparse import parse_time, TimeClarification
     time_problem=''
     try:
-        mentioned,reservation=parse_time(orderflow.time_text(utterance))
+        mentioned,reservation=parse_time(orderflow.time_text(utterance),grounding.now_cn())
     except TimeClarification as exc:
         time_problem=str(exc);mentioned,reservation=False,None
     if mentioned:
@@ -1033,7 +1075,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         inferred['people']=int(value) if value.isdigit() else '一二三四五六七八九十'.index(value.replace('两','二'))+1
     current_facts=copy.deepcopy(incoming)
     if continuing:
-        old=previous.get('elements',{})
+        old=without_derived(previous.get('elements',{}))  # derived keys are recomputed at quote time, never carried over
         old_sources={k:old.get('sources',{}).get(k,'default') for k in old if k!='sources'}
         incoming={**old,**incoming,'sources':{**old_sources,**{k:'utterance' for k in current_facts if k!='sources'}}}
     e=merge_elements(previous.get('elements',{}),incoming)
@@ -1053,9 +1095,12 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     concrete=bool(food_text) or (bool(intent_text(utterance)) and (not intent_text(utterance).isdigit() or bool(slang and slang['kind'] in {'direct','family','ambiguous'})))
     if recommend is not None and plan is None:plan='帮我配' if recommend else '我自己点'
     if any(w in utterance for w in ('帮我配','帮我推荐','推荐一下','随便来点')) or people_match or re.search(r'预算|不吃|忌口',utterance):plan='帮我配'
-    elif re.search(r'照上次|照旧',utterance):plan='照上次那份'
+    elif re.search(again,utterance):plan='照上次那份'
     elif re.search(r'自己(?:来)?(?:点|选|看看菜单|看下菜单|看菜单)',utterance):plan='我自己点'
     elif concrete and plan is None:plan='我自己点'
+    plan_fact=None
+    if plan=='帮我配' and not re.search(r'帮我配|帮我推荐|推荐一下|随便来点|预算|忌口|不吃',utterance) and not people_match and slang and slang['kind'] in {'direct','family','ambiguous'}:
+        plan_fact='plan=帮我配 来自传入的参数；用户原话里没有配餐类说法（帮我配、推荐、人数、预算、忌口），有餐品称呼「'+slang['matched_alias']+'」'
     if plan=='帮我配':concrete=False
     if nonfood and not structured:concrete=False
     sid=state['active_session'] if continuing else secrets.token_urlsafe(24)
@@ -1091,6 +1136,18 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         grounded=await orderflow.apply(sys.modules[__name__],t,sid,{},utterance,check_items=False)
         cart=dict(carts[sid]);e=cart['elements']
     await resolve_cart_intent(cart,t)
+    if (continuing and not structured and not cart['items'] and not cart.get('intent_question') and not active.get('items') and active.get('intent')
+            and not active.get('intent_resolved') and cart.get('intent')!=active['intent']):
+        # the earlier sentence named a food that could not be grounded yet (no store, bad address); this answer names none
+        cart.update(intent=active['intent'],intent_resolved=False)
+        await resolve_cart_intent(cart,t)
+    if continuing and not structured and not cart['items'] and not cart.get('intent_question') and not cart.get('violations') and active.get('items'):
+        # The host named no food this turn and the wording matched none (a time or address change): the chosen food stays.
+        cart.update(items=copy.deepcopy(active['items']),intent='',intent_resolved=True,item_summary=active.get('item_summary',''))
+        if active.get('foods_raw'):cart['foods_raw']=copy.deepcopy(active['foods_raw'])
+        same=lambda x:{k:v for k,v in without_derived(x).items() if k!='sources'}
+        if active.get('pending_plan_id') and same(cart['elements'])==same(active['elements']) and cart.get('store_code')==active.get('store_code'):
+            cart['pending_plan_id']=active['pending_plan_id']  # nothing about the order changed: its quote still stands
     if time_problem:
         cart['violations']=[v for v in cart.get('violations',[]) if v['slot']!='time']+[orderflow.time_problem(time_problem,grounding.now_cn())]
     if nonfood and not structured:
@@ -1161,8 +1218,10 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         if cart['plan']=='照上次那份':cart['items']=copy.deepcopy(last_order.get('items',[]))
     if time_problem:data_time={'time_clarification':True}
     else:data_time={}
+    if 'where' in missing and e.get('fulfillment')!='delivery':data_time={**data_time,'missing_facts':{'where':'服务端没有从原话里识别出地标；识别不到不等于用户没说，原话里的城市、路名、小区或地标可用 resolve_order 的 city、landmark 传入'}}
     data={**data_time,'stage':'ask','question':question,'ui_mode':ui_mode,'form_response':form_response,'inferred':inferred,'inferred_sources':[{'key':k,'value':v,'source':e['sources'].get(k,'utterance')} for k,v in e.items() if k!='sources'],'missing':missing,'ask':{'message':question,'fields':list(fields)},'elements':e,'items':cart['items'],'store_code':cart['store_code'],'session_id':sid,'reuse_label':'沿用上次' if reused else '', 'last_order_summary':summary,'default_time':'立即（默认）','reply_options':reply_options}
     if inferred.get('people'):data['people']=inferred['people']
+    if plan_fact:data['plan_fact']=plan_fact
     if cart.get('plan')=='帮我配' and cart['store_code']:
         cart['items']=[]
         data.update(items=[],stage='pick',recommend=True)
@@ -1170,10 +1229,10 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         text='按这家店现在的菜单，结合你的条件配主推和备选。'
     elif cart['items'] and cart['store_code']:
         data.update(stage='pick');text='收到你点的餐品。'
-    elif cart.get('plan')=='我自己点' and cart['store_code']:
+    elif cart.get('plan')=='我自己点' and cart['store_code'] and not (cart.get('violations') or cart.get('open_questions') or cart.get('foods_raw') or cart.get('pending_foods')):
         page=await picker_page(cart,sid)
         data.update(stage='pick',order_url=page,picker_url=page,links={'picker_url':page})
-        text=f'[打开点餐页]({page}) — 选好点底部“选好了，去算最省”，选好会自动接着算；如果没接上，回来说一句“好了”。'
+        text=f'点餐页：[打开点餐页]({page})。页面底部“选好了，去算最省”按钮提交选择，提交后 get_cart 读得到；用户说“好了”时服务端也会去读页面状态。'
     elif not missing:
         text='已记下地点「'+cart['location']+'」，还没有查门店。'
     if cart.get('violations'):
@@ -1193,7 +1252,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
                 names={r['productCode']:r['name'] for r in menu_rows(current)}
             except Exception:names={}
             summary='、'.join(names.get(i['productCode'],'所选餐品')+' ×'+str(i['quantity']) for i in pending['items'])
-        notice='上次有一份没下单的（'+summary+'），要接着用吗？说“继续刚才”即可恢复。'
+        notice='上次有一份没下单的（'+summary+'）；用户说“继续刚才”可恢复。'
         data['pending_cart_notice']=notice
         text+='\n\n'+notice
     carts[sid]=cart
@@ -1274,7 +1333,7 @@ async def get_location(session_id: str, wait: int = 25) -> CallToolResult:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def delivery_addresses() -> CallToolResult:
     data=await upstream.call(token(),"delivery-query-addresses",{})
-    return result(data,"请选择已有配送地址；新地址须单独确认。")
+    return result(data,"账户已保存的配送地址如上；新地址须单独确认。")
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=True))
@@ -1286,7 +1345,7 @@ async def prepare_address(address: dict) -> CallToolResult:
     confirmation=secrets.token_urlsafe(24)
     pending_addresses[confirmation]=(owner(token()),dict(address))
     visible=dict(address,phone=address["phone"][:3]+"****"+address["phone"][-4:])
-    return result({"address":visible,"confirmation":confirmation},"请逐项核对地址，确认后才会保存到麦当劳账户。")
+    return result({"address":visible,"confirmation":confirmation},"地址待用户逐项核对，确认后才会保存到麦当劳账户。")
 
 
 @mcp.tool(meta={"anthropic/requiresUserInteraction":True},annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
@@ -1313,12 +1372,12 @@ async def confirm_address(confirmation: str) -> CallToolResult:
     state=memory.read(owner(t))
     attempts=state.setdefault('address_attempts',{})
     if signature in attempts:
-        return result({'already_submitted':True},'该地址已提交过，请查询已有地址核实；不会重复创建。')
+        return result({'already_submitted':True},'该地址已提交过；不会重复创建，可在已有地址里核实。')
     attempts[signature]='submitted'
     memory.write(owner(t),state)
     upstream.confirmed_addresses.add((owner(t),json.dumps(address,sort_keys=True)))
     data=await upstream.call(t,"delivery-create-address",address)
-    return result(data,"地址已保存；请按地址查询可配送门店。")
+    return result(data,"地址已保存。")
 
 
 async def setup_page(request):
@@ -1556,7 +1615,7 @@ async def wait_click_outcome(key, seconds=30):
             confirmations.transition(key,'failure_reported',('failed',))
             raise ValueError(current.get('error') or '确认后下单没有成功，订单没有创建。')
         await asyncio.sleep(.2)
-    raise ValueError('订单还在创建中，请稍后调用 wait_payment 或再次 place_orders 查看结果；不要重新报价下单。')
+    raise ValueError('订单还在创建中；wait_payment 或再次 place_orders 可查看结果，重新报价下单会重复建单。')
 
 
 async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim=None):
