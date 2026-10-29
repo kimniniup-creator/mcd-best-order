@@ -485,7 +485,8 @@
                   "last",
                   "default",
                   "account",
-                  "nearest"
+                  "nearest",
+                  "preference"
                 ],
                 "type": "string"
               },
@@ -719,7 +720,8 @@
                   "last",
                   "default",
                   "account",
-                  "nearest"
+                  "nearest",
+                  "preference"
                 ],
                 "type": "string"
               },
@@ -901,7 +903,8 @@
                   "last",
                   "default",
                   "account",
-                  "nearest"
+                  "nearest",
+                  "preference"
                 ],
                 "type": "string"
               },
@@ -1076,7 +1079,8 @@
                   "last",
                   "default",
                   "account",
-                  "nearest"
+                  "nearest",
+                  "preference"
                 ],
                 "type": "string"
               },
@@ -1488,7 +1492,8 @@
                   "last",
                   "default",
                   "account",
-                  "nearest"
+                  "nearest",
+                  "preference"
                 ],
                 "type": "string"
               },
@@ -1537,6 +1542,72 @@
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true
+    }
+  },
+  {
+    "name": "open_admin",
+    "description": "用户想查看或修改长期点餐偏好（忌口、口味、默认取餐方式和门店、常点的餐、自己的说法）时调用，返回本机偏好设置页链接。\n\n链接 10 分钟内有效、只能打开一次，只对本人账户生效。原样把 display_markdown 发给用户。\n",
+    "inputSchema": {
+      "properties": {},
+      "title": "open_adminArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "prepare_preference",
+    "description": "用户说“以后都…”“记住我…”这类长期偏好时，先问用户要不要记成长期偏好；用户同意后调用本工具。\n\n只返回保存后的样子和一次性凭证，不写入。把 display_markdown 原样给用户看，用户再次同意后才调用 save_preference。\n只说这一单的要求（“这次不要辣”）不是长期偏好，不要调用。\n",
+    "inputSchema": {
+      "properties": {
+        "change": {
+          "additionalProperties": true,
+          "description": "要新增的长期偏好，只写用户这次明确说要长期记住的：avoid（不吃的）、taste（口味）、defaults（fulfillment/city/landmark/store_name/take_way/tableware）、meals（[{name, items}]）、aliases（[{label, foods}]）",
+          "title": "Change",
+          "type": "object"
+        }
+      },
+      "required": [
+        "change"
+      ],
+      "title": "prepare_preferenceArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "save_preference",
+    "description": "用户看过 prepare_preference 的预览并同意后，带上凭证保存。凭证 10 分钟内有效，只能用一次，只对本人账户有效。",
+    "inputSchema": {
+      "properties": {
+        "confirmation": {
+          "title": "Confirmation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "confirmation"
+      ],
+      "title": "save_preferenceArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
     }
   },
   {

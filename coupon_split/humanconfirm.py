@@ -76,10 +76,11 @@ class ConfirmationStore:
 
     def live_until(self):
         """Latest time the page service must stay for a confirmation that is still clickable or being processed: its validity
-        plus the ontology's grace, so that an expired link says so instead of refusing the connection. 0 if none."""
+        plus the ontology's grace, so that an expired link says so instead of refusing the connection. An 'expired' record counts
+        the same: the state is written at the first look after the deadline, and that must not shorten the grace. 0 if none."""
         with self._db() as db:
             rows = [json.loads(body) for (body,) in db.execute('SELECT body FROM confirmations')]
-        return max((r['created'] + TTL_SECONDS + EXPIRED_PAGE_SECONDS for r in rows if r['state'] in {'pending', 'approved', 'placing', 'creating'}), default=0)
+        return max((r['created'] + TTL_SECONDS + EXPIRED_PAGE_SECONDS for r in rows if r['state'] in {'pending', 'approved', 'placing', 'creating', 'expired'}), default=0)
 
     def transition(self, key, state, only_from=('pending',), **extra):
         """Atomic compare-and-set across processes. Returns the new record, or None if the state did not match.

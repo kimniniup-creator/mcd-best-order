@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>共用本体 · 开发者</title><link rel="stylesheet" href="/design/tokens.css">
+<style>
+body{margin:0;background:var(--c-canvas);color:var(--c-ink);font:15px/1.6 system-ui,sans-serif}
+header{padding:16px;border-bottom:1px solid var(--c-line);background:var(--c-paper)}
+header h1{font-size:1.25rem;margin:0}
+.hint{color:var(--c-ink-2);margin:.25rem 0 0;font-size:.9rem}
+.wrap{display:grid;grid-template-columns:300px 1fr;gap:16px;padding:16px;max-width:1200px;margin:0 auto 96px}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}}
+aside,section{background:var(--c-paper);border:1px solid var(--c-line);border-radius:12px;padding:12px}
+aside{max-height:calc(100vh - 200px);overflow:auto;position:sticky;top:12px}
+@media (max-width:760px){aside{position:static;max-height:none}}
+#list button{display:block;width:100%;text-align:left;min-height:44px;padding:6px 10px;margin:2px 0;background:transparent;border:1px solid transparent;border-radius:8px;color:var(--c-ink);font:inherit;cursor:pointer}
+#list button[aria-current="true"]{border:2px solid #C8430E;font-weight:600}
+#list small{color:var(--c-ink-2);margin-left:6px}
+label{display:block;margin:.6rem 0 .2rem;font-weight:600}
+input,select,textarea{box-sizing:border-box;width:100%;min-height:44px;font:inherit;padding:8px 10px;border:1.5px solid var(--c-line-strong);border-radius:8px;background:var(--c-paper);color:var(--c-ink)}
+textarea{min-height:72px;resize:vertical;font-family:ui-monospace,monospace}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+@media (max-width:480px){.row{grid-template-columns:1fr}}
+.check{display:flex;gap:8px;align-items:center;min-height:44px}.check input{width:24px;min-height:24px}
+button.b{font:inherit;min-height:44px;padding:0 16px;border-radius:999px;cursor:pointer;border:1.5px solid var(--c-ink);background:transparent;color:var(--c-ink)}
+button.primary{background:#C8430E;color:#fff;border-color:#C8430E;font-weight:600}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--c-focus);outline-offset:2px}
+details{margin-top:16px}summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
+pre{white-space:pre-wrap;word-break:break-all;background:var(--c-paper-sunk);padding:12px;border-radius:8px;max-height:360px;overflow:auto;font-size:.85rem}
+footer{position:fixed;left:0;right:0;bottom:0;background:var(--c-paper);border-top:1px solid var(--c-line);padding:12px 16px}
+footer div{max-width:1200px;margin:0 auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+#status{flex:1;min-width:12rem}
+#problems{color:var(--c-fail);margin:0;padding-left:1.2rem}
+.ok{color:var(--c-save-ink)}
+</style></head>
+<body>
+<header><h1>共用本体（开发者）</h1>
+<p class="hint">这里只编辑词汇概念。保存不会改动已安装的文件：先“检查”，通过后“导出”新的 mcd-ontology.json，放进仓库走 PR。结构模型（槽位、约束、状态图）只读。</p></header>
+<div class="wrap">
+<aside><label for="search">搜索说法或 id</label><input id="search" autocomplete="off"><div id="list" role="list"></div>
+<button class="b" type="button" id="add" style="margin-top:8px">新增概念</button></aside>
+<div>
+<section id="editor" hidden>
+<div class="row">
+<div><label for="f-id">id</label><input id="f-id" autocomplete="off"></div>
+<div><label for="f-type">类型</label><select id="f-type"></select></div>
+<div><label for="f-pref">标准名</label><input id="f-pref"></div>
+<div><label for="f-entry">黑话编号（空 = 只是上位类目）</label><input id="f-entry" inputmode="numeric"></div>
+</div>
+<label for="f-alt">用户的说法（一行一个）</label><textarea id="f-alt"></textarea>
+<label for="f-ground">菜单名称模式（一行一个，只写名称，不写商品码和价格）</label><textarea id="f-ground"></textarea>
+<div class="row">
+<div><label for="f-broader">上位概念 id（一行一个）</label><textarea id="f-broader"></textarea></div>
+<div><label for="f-siblings">菜单出现这些名称时追问（一行一个）</label><textarea id="f-siblings"></textarea></div>
+<div><label for="f-asklabels">这些说法总要追问（一行一个）</label><textarea id="f-asklabels"></textarea></div>
+<div><label for="f-avail">供应时段（一行一个）</label><textarea id="f-avail"></textarea></div>
+</div>
+<div class="row">
+<div><label for="f-main">套餐主食 id</label><input id="f-main" autocomplete="off"></div>
+<div><label for="f-bylabel">说法 → 指定名称（JSON）</label><input id="f-bylabel" autocomplete="off" placeholder='{"金乐鸡":["麦乐鸡"]}'></div>
+</div>
+<label for="f-note">给用户的说明（非餐品类）</label><input id="f-note">
+<div class="row"><label class="check"><input type="checkbox" id="f-askalways">总是追问</label><label class="check"><input type="checkbox" id="f-card">显示含卡价和不带卡价</label></div>
+<button class="b" type="button" id="remove" style="margin-top:12px">删除这个概念</button>
+</section>
+<details><summary>结构模型（只读）</summary><pre id="model"></pre></details>
+</div></div>
+<footer><div><output id="status" role="status" aria-live="polite"></output>
+<label for="revision" style="margin:0">版本日期</label><input id="revision" style="width:9.5rem" autocomplete="off">
+<button class="b" type="button" id="check">检查</button><button class="b primary" type="button" id="export">导出</button></div>
+<ul id="problems"></ul></footer>
+<script>
+const $=id=>document.getElementById(id),lines=t=>t.split('\n').map(s=>s.trim()).filter(Boolean)
+let data,concepts=[],current=-1
+function say(t,cls){$('status').textContent=t;$('status').className=cls||''}
+function showProblems(list){$('problems').innerHTML='';(list||[]).forEach(p=>{const li=document.createElement('li');li.textContent=p;$('problems').appendChild(li)})}
+function render(){
+  const q=$('search').value.trim();$('list').innerHTML=''
+  concepts.forEach((c,i)=>{
+    if(q&&!(c.id.includes(q)||c.prefLabel.includes(q)||(c.altLabel||[]).some(a=>a.includes(q))))return
+    const b=document.createElement('button');b.type='button';b.setAttribute('role','listitem')
+    b.textContent=c.prefLabel||c.id;const s=document.createElement('small');s.textContent=c.type+(c.entry?' · #'+c.entry:'');b.appendChild(s)
+    b.setAttribute('aria-current',String(i===current));b.onclick=()=>{store();open(i)};$('list').appendChild(b)
+  })
+}
+function open(i){
+  current=i;const c=concepts[i];$('editor').hidden=false
+  $('f-id').value=c.id;$('f-type').value=c.type;$('f-pref').value=c.prefLabel||'';$('f-entry').value=c.entry||''
+  $('f-alt').value=(c.altLabel||[]).join('\n');$('f-ground').value=(c.groundBy||[]).join('\n')
+  $('f-broader').value=(c.broader||[]).join('\n');$('f-siblings').value=(c.askWhenSiblings||[]).join('\n')
+  $('f-asklabels').value=(c.askLabels||[]).join('\n');$('f-avail').value=(c.availableIn||[]).join('\n')
+  $('f-main').value=c.hasMain||'';$('f-bylabel').value=c.byLabel?JSON.stringify(c.byLabel):'';$('f-note').value=c.note||''
+  $('f-askalways').checked=!!c.askAlways;$('f-card').checked=!!c.cardVariant;render()
+}
+function store(){
+  if(current<0)return true
+  const c={id:$('f-id').value.trim(),type:$('f-type').value,prefLabel:$('f-pref').value.trim(),altLabel:lines($('f-alt').value),groundBy:lines($('f-ground').value)}
+  if($('f-entry').value.trim())c.entry=Number($('f-entry').value)
+  const list=(k,id)=>{const v=lines($(id).value);if(v.length)c[k]=v}
+  list('broader','f-broader');list('askWhenSiblings','f-siblings');list('askLabels','f-asklabels');list('availableIn','f-avail')
+  if($('f-main').value.trim())c.hasMain=$('f-main').value.trim()
+  if($('f-bylabel').value.trim()){try{c.byLabel=JSON.parse($('f-bylabel').value)}catch{say('“说法 → 指定名称”不是合法 JSON','err');return false}}
+  if($('f-note').value.trim())c.note=$('f-note').value.trim()
+  if($('f-askalways').checked)c.askAlways=true
+  if($('f-card').checked)c.cardVariant='card'
+  concepts[current]=c;return true
+}
+async function post(path){
+  if(!store())return null
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({concepts,revision:$('revision').value.trim()})})
+  return r
+}
+$('search').oninput=render
+$('add').onclick=()=>{store();concepts.push({id:'new-concept',type:'Product',prefLabel:'',altLabel:[],groundBy:[]});open(concepts.length-1)}
+$('remove').onclick=()=>{if(current<0)return;concepts.splice(current,1);current=-1;$('editor').hidden=true;render();say('已删除（导出后才会生效）')}
+$('check').onclick=async()=>{const r=await post('/admin/ontology/check');if(!r)return;const d=await r.json();showProblems(d.problems);say(d.ok?'检查通过，可以导出。':'有 '+d.problems.length+' 处问题。',d.ok?'ok':'err')}
+$('export').onclick=async()=>{
+  const r=await post('/admin/ontology/export');if(!r)return
+  if(!r.ok){const d=await r.json().catch(()=>({}));showProblems(d.problems);return say('不能导出，先改掉下面的问题。','err')}
+  const blob=await r.blob(),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='mcd-ontology.json';a.click()
+  showProblems([]);say('已导出。替换仓库里的 coupon_split/data/mcd-ontology.json，跑 pytest 后开 PR。','ok')
+}
+;(async()=>{
+  const r=await fetch('/admin/ontology/data');if(!r.ok)return say('读不到本体，请回到对话重新打开后台。','err')
+  data=await r.json();concepts=data.concepts
+  for(const [k,v] of Object.entries(data.types)){const o=document.createElement('option');o.value=k;o.textContent=k+' · '+v;$('f-type').appendChild(o)}
+  $('revision').value=new Date().toISOString().slice(0,10);$('model').textContent=JSON.stringify(data.model,null,2);render()
+})()
+</script></body></html>

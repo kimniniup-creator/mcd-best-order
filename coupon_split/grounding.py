@@ -100,7 +100,7 @@ def ground_time(when, store, now=None):
 DESCRIBES = re.compile(r'(?:末尾|结尾|尾部|最后|后面|开头|前面)(?:是|写着|写的是|为|有|带着|带)?|写着|写的是|叫做|名为|以前|之前|曾经|先前|早先|存过|保存过|保存的|存的|存下的|收藏的|那一个|那处|(?:吧|呢|啊|呀|哈|了)+$')
 
 
-POSITIONED = re.compile(r'(?:末尾|结尾|尾部|最后|开头)(?:是|写着|写的是|为|有|带着|带)?\s*([^的，。,;；、\s]{1,16})|(?:后面|前面)(?:是|写着|写的是|为|有|带着)\s*([^的，。,;；、\s]{1,16})')
+POSITIONED = re.compile(r'(?:末尾|结尾|尾部|最后|开头)(?:是|写着|写的是|为|有|带着|带)?\s*([^的，。,;；、\s]{1,16})|(?:后面|前面)(?:是|写着|写的是|为|有|带着)\s*([^的，。,;；、\s]{1,16})|([^的，。,;；、\s]{1,16})(?:结尾|末尾|尾部|开头)的')
 
 
 META_CLAUSE = re.compile(r'(?:不用|不必|不需要|无需|不要).{0,8}(?:抄|写|输入|报|说)|名字前面|抄了吧')
@@ -117,7 +117,7 @@ def describing_words(hint):
         hint = '，'.join(kept)
     named = POSITIONED.search(hint or '')
     if named:  # "…里结尾有X的那条，名字前面的字不用再抄": the distinctive text is X; the rest is talk around it
-        return named.group(1) or named.group(2)
+        return named.group(1) or named.group(2) or named.group(3)
     text = re.sub(r'[\s，。,;；、]', '', hint or '')
     if not DESCRIBES.search(text):
         return hint or ''

@@ -166,7 +166,7 @@ def human_time(value, delivery=False, now=None):
 
 def element_rows(plan):
     e=plan.get('order_elements',{});sources=e.get('sources',{})
-    def row(key,label,value):return {'key':key,'label':label,'value':value,'mark':{'last':'沿用上次','default':'默认','utterance':'你说的','nearest':'最近'}.get(sources.get(key),'')}
+    def row(key,label,value):return {'key':key,'label':label,'value':value,'mark':{'last':'沿用上次','default':'默认','utterance':'你说的','nearest':'最近','preference':'沿用偏好'}.get(sources.get(key),'')}
     delivery=e.get('fulfillment')=='delivery'
     result=[row('fulfillment','方式',{'pickup':'到店自取','drive':'得来速','delivery':'麦乐送'}.get(e.get('fulfillment'),'到店自取'))]
     if delivery:result.append(row('addressId','送到',e.get('delivery_address','所选地址')+'，'+plan.get('storeName','所选门店')+'配送'+(' · '+plan['distance'] if plan.get('distance') else '')))

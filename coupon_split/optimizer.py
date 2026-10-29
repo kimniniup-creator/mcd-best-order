@@ -398,5 +398,5 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     comparison=dict(options=list(strategies.values()),selected_strategy=ranked[0]['strategy'],selected_price=ranked[0]['price'],
         explanation='在已按官方计价核验且内容规格完全一致的候选中，选择最低总价；同价优先少付几笔。',
         scope='有界搜索，不承诺穷尽所有买法；无法核价的候选未作价格结论。')
-    comparison['text']='｜'.join(p['strategy']+' ¥'+f"{p['price']/100:.2f}" for p in comparison['options'])+' → 选了'+comparison['selected_strategy']+'，'+comparison['explanation']
+    comparison['text']='｜'.join(p['strategy']+' ¥'+f"{p['price']/100:.2f}"+(f"（比所选多 ¥{p['difference']/100:.2f}）" if p['difference']>0 else '') for p in comparison['options'])+' → 选了'+comparison['selected_strategy']+'，'+comparison['explanation']
     return {"comparison_summary":comparison,"baseline": baseline["price"], "baseline_evidence_id": baseline["orders"][0]["evidence_id"], "plans": ranked, "no_card": next((p for p in ranked if not p["buys_card"]), None), "compared": len(ranked), "evaluated":len(evaluated), "rejected": len(rejected), "exclusions":excluded+rejected, "price_calls": len(cache), "evidence": traces, "storeCode": store, "cart": dict(need), "names":names, "search_limit": MAX_CALLS, "elapsed_seconds":round(time.monotonic()-started,3)}

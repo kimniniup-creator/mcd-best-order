@@ -788,6 +788,62 @@ async def preview_selection(store_code: str, items: list[dict], elements: OrderE
     return result({"takeWayList":r["data"].get("takeWayList",[]),"price":r["data"]["price"]},"本次官方返回的取餐方式如上。")
 
 
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=False,openWorldHint=False))
+async def open_admin() -> CallToolResult:
+    """用户想查看或修改长期点餐偏好（忌口、口味、默认取餐方式和门店、常点的餐、自己的说法）时调用，返回本机偏好设置页链接。
+
+    链接 10 分钟内有效、只能打开一次，只对本人账户生效。原样把 display_markdown 发给用户。
+    """
+    from coupon_split.admin import issue
+    key=issue(owner(token()))
+    page=(await local_url())+'/admin/'+key
+    return result({'stage':'admin','admin_url':page,'links':{'admin_url':page}},f'[打开偏好设置]({page}) — 只存在这台电脑上，只对你的账户生效；链接 10 分钟内有效。')
+
+
+pending_preferences = {}
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=False,openWorldHint=False))
+async def prepare_preference(change: Annotated[dict, Field(description='要新增的长期偏好，只写用户这次明确说要长期记住的：avoid（不吃的）、taste（口味）、defaults（fulfillment/city/landmark/store_name/take_way/tableware）、meals（[{name, items}]）、aliases（[{label, foods}]）')]) -> CallToolResult:
+    """用户说“以后都…”“记住我…”这类长期偏好时，先问用户要不要记成长期偏好；用户同意后调用本工具。
+
+    只返回保存后的样子和一次性凭证，不写入。把 display_markdown 原样给用户看，用户再次同意后才调用 save_preference。
+    只说这一单的要求（“这次不要辣”）不是长期偏好，不要调用。
+    """
+    from coupon_split.prefs import validate
+    t=token();account=owner(t)
+    current=preferences.read(account)
+    clean=validate({k:v for k,v in change.items() if k!='defaults'} | {'defaults':change.get('defaults',{})})
+    merged=validate({**current,
+        'avoid':current['avoid']+clean['avoid'],'taste':current['taste']+clean['taste'],
+        'defaults':{**current['defaults'],**clean['defaults']},
+        'meals':[m for m in current['meals'] if m['name'] not in {x['name'] for x in clean['meals']}]+clean['meals'],
+        'aliases':[a for a in current['aliases'] if a['label'] not in {x['label'] for x in clean['aliases']}]+clean['aliases']})
+    key=secrets.token_urlsafe(18)
+    pending_preferences[key]=(account,clean,time.time()+600)
+    lines=[]
+    if clean['avoid']:lines.append('不吃：'+'、'.join(clean['avoid']))
+    if clean['taste']:lines.append('口味：'+'、'.join(clean['taste']))
+    labels={'fulfillment':'取餐方式','city':'城市','landmark':'地标','store_name':'门店','take_way':'堂食/外带','tableware':'餐具'}
+    shown={'pickup':'到店自取','drive':'得来速','delivery':'外送','eat-in':'堂食','take-in-store':'外带',True:'要',False:'不要'}
+    for k,v in clean['defaults'].items():lines.append(labels[k]+'默认：'+str(shown.get(v,v)))
+    for m in clean['meals']:lines.append('常点“'+m['name']+'”：'+'、'.join(m['items']))
+    for a in clean['aliases']:lines.append('说“'+a['label']+'”就是：'+'、'.join(a['foods']))
+    if not lines:raise ValueError('没有要记的偏好')
+    return result({'stage':'preference_preview','confirmation':key,'change':clean,'after':merged},
+                  '要记成长期偏好吗？只存在这台电脑上，以后点餐没说的会按这个来，并标“沿用偏好”：\n'+'\n'.join('- '+x for x in lines))
+
+
+@mcp.tool(meta={"anthropic/requiresUserInteraction":True},annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False))
+async def save_preference(confirmation: str) -> CallToolResult:
+    """用户看过 prepare_preference 的预览并同意后，带上凭证保存。凭证 10 分钟内有效，只能用一次，只对本人账户有效。"""
+    t=token();entry=pending_preferences.pop(confirmation,None)
+    if not entry or entry[0]!=owner(t) or entry[2]<time.time():
+        raise ValueError('偏好确认凭证无效或已过期，请重新预览')
+    saved=preferences.merge(entry[0],entry[1])
+    return result({'stage':'preference_saved','preferences':saved},'已记住。想改随时说，或者说“打开偏好设置”。')
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def account_info() -> CallToolResult:
     """读取本人账户，仅返回账户后四位与本机别名，不返回完整账户号。"""
@@ -885,6 +941,8 @@ async def validate_selected(t, store, items, context, fill_defaults=False):
 
 
 memory = LocalState(runtime/"memory")
+from coupon_split.prefs import Preferences
+preferences = Preferences(runtime/"preferences")
 carts = CartStore(runtime/'carts.sqlite3')
 pending_addresses = {}
 bridge_port = None
@@ -1883,7 +1941,7 @@ async def payment_page(request):
     return JSONResponse(payment_state(plan,request.headers.get('user-agent','')),headers=headers)
 
 
-app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}/withdraw',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}/withdraw',payment_page,methods=['POST']),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route("/locate/{session_id}",locate_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
+app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}/withdraw',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}/withdraw',payment_page,methods=['POST']),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route("/locate/{session_id}",locate_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),*__import__('coupon_split.admin',fromlist=['routes']).routes(ROOT,preferences),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
 
 if __name__ == "__main__":
     import uvicorn

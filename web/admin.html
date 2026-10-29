@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>我的点餐偏好 · 最优下单</title><link rel="stylesheet" href="/design/tokens.css">
+<style>
+body{margin:0;background:var(--c-canvas);color:var(--c-ink);font:16px/1.7 system-ui,sans-serif}
+main{max-width:40rem;margin:0 auto;padding:24px 16px 120px}
+h1{font-size:1.4rem;margin:.5rem 0 .25rem}
+h2{font-size:1.05rem;margin:0 0 .25rem}
+.hint{color:var(--c-ink-2);margin:0 0 .75rem;font-size:.92rem}
+section{background:var(--c-paper);border:1px solid var(--c-line);border-radius:12px;padding:16px;margin:16px 0}
+label{display:block;margin:.6rem 0 .2rem;font-weight:600}
+input,select,textarea{box-sizing:border-box;width:100%;min-height:44px;font:inherit;padding:8px 10px;border:1.5px solid var(--c-line-strong);border-radius:8px;background:var(--c-paper);color:var(--c-ink)}
+textarea{min-height:88px;resize:vertical}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+@media (max-width:480px){.row{grid-template-columns:1fr}}
+.item{border-top:1px dashed var(--c-line-strong);padding-top:8px;margin-top:8px}
+button{font:inherit;min-height:44px;padding:0 18px;border-radius:999px;cursor:pointer}
+.ghost{background:transparent;border:1.5px solid var(--c-ink);color:var(--c-ink)}
+.link{background:transparent;border:0;color:var(--c-fail);text-decoration:underline;padding:0 4px}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--c-focus);outline-offset:2px}
+footer{position:fixed;left:0;right:0;bottom:0;background:var(--c-paper);border-top:1px solid var(--c-line);padding:12px 16px}
+footer div{max-width:40rem;margin:0 auto;display:flex;gap:12px;align-items:center}
+#save{background:#C8430E;color:#fff;border:0;font-weight:600}
+#save:disabled{background:var(--c-paper-sunk);color:var(--c-ink-2);border:1.5px solid var(--c-line-strong);cursor:default}
+#status{flex:1;min-height:1.6em}
+.ok{color:var(--c-save-ink)}.err{color:var(--c-fail)}
+</style></head>
+<body><main>
+<h1>我的点餐偏好</h1>
+<p class="hint">只存在这台电脑上，只对你这个麦当劳账户生效。</p>
+<p id="dev" class="hint" hidden><a href="/admin/ontology">开发者：编辑共用本体 ›</a></p>
+
+<section><h2>忌口和口味</h2>
+<p class="hint">一行一条，例如：辣、牛肉、洋葱。</p>
+<label for="avoid">不吃</label><textarea id="avoid"></textarea>
+<label for="taste">口味</label><textarea id="taste" placeholder="例如：少冰、可乐换无糖"></textarea>
+</section>
+
+<section><h2>默认要素</h2>
+<p class="hint">留空表示每次照常问。</p>
+<div class="row">
+<div><label for="fulfillment">取餐方式</label><select id="fulfillment"><option value="">每次问</option><option value="pickup">到店自取</option><option value="drive">得来速</option><option value="delivery">麦乐送外送</option></select></div>
+<div><label for="take_way">堂食 / 外带</label><select id="take_way"><option value="">每次问</option><option value="eat-in">堂食</option><option value="take-in-store">外带</option></select></div>
+<div><label for="city">城市</label><input id="city" autocomplete="off"></div>
+<div><label for="landmark">常去的地标</label><input id="landmark" autocomplete="off"></div>
+<div><label for="store_name">常去的门店名</label><input id="store_name" autocomplete="off"></div>
+<div><label for="tableware">餐具</label><select id="tableware"><option value="">每次问</option><option value="false">不要</option><option value="true">要</option></select></div>
+</div>
+</section>
+
+<section><h2>常点的餐</h2>
+<p class="hint">起个名字，一行一样餐品，例如“麦辣鸡腿堡 2份”。</p>
+<div id="meals"></div><button class="ghost" type="button" id="add-meal">加一份常点</button>
+</section>
+
+<section><h2>我的说法</h2>
+<p class="hint">你自己的叫法，例如“老三样”对应哪几样。只对你生效。</p>
+<div id="aliases"></div><button class="ghost" type="button" id="add-alias">加一条说法</button>
+</section>
+</main>
+<footer><div><output id="status" role="status" aria-live="polite"></output><button id="save" type="button" disabled>保存</button></div></footer>
+<script>
+const $=id=>document.getElementById(id),status=$('status'),save=$('save')
+const lines=t=>t.split('\n').map(s=>s.trim()).filter(Boolean)
+function say(text,cls){status.textContent=text;status.className=cls||''}
+function group(box,kind,name,foods){
+  const n=box.children.length+1,d=document.createElement('div');d.className='item'
+  const title=kind==='meal'?'名称':'说法',body=kind==='meal'?'内容（一行一样）':'对应的餐品（一行一样）'
+  d.innerHTML=`<label for="${kind}-n-${n}">${title}</label><input id="${kind}-n-${n}" class="n"><label for="${kind}-f-${n}">${body}</label><textarea id="${kind}-f-${n}" class="f"></textarea><button type="button" class="link">删除这条</button>`
+  d.querySelector('.n').value=name||'';d.querySelector('.f').value=(foods||[]).join('\n')
+  d.querySelector('.link').onclick=()=>{d.remove();dirty()}
+  d.oninput=dirty;box.appendChild(d)
+}
+function collect(){
+  const def={},opt=(id,v)=>{if(v!=='')def[id]=v}
+  opt('fulfillment',$('fulfillment').value);opt('take_way',$('take_way').value)
+  for(const k of ['city','landmark','store_name'])opt(k,$(k).value.trim())
+  if($('tableware').value!=='')def.tableware=$('tableware').value==='true'
+  const pick=(box,a,b)=>[...$(box).children].map(d=>({[a]:d.querySelector('.n').value.trim(),[b]:lines(d.querySelector('.f').value)})).filter(x=>x[a]||x[b].length)
+  return{avoid:lines($('avoid').value),taste:lines($('taste').value),defaults:def,meals:pick('meals','name','items'),aliases:pick('aliases','label','foods')}
+}
+function dirty(){save.disabled=false;say('有改动，记得保存')}
+function fill(p){
+  $('avoid').value=p.avoid.join('\n');$('taste').value=p.taste.join('\n')
+  for(const k of ['fulfillment','take_way','city','landmark','store_name'])$(k).value=p.defaults[k]||''
+  $('tableware').value='tableware' in p.defaults?String(p.defaults.tableware):''
+  $('meals').innerHTML='';$('aliases').innerHTML=''
+  p.meals.forEach(m=>group($('meals'),'meal',m.name,m.items));p.aliases.forEach(a=>group($('aliases'),'alias',a.label,a.foods))
+}
+async function load(){
+  const r=await fetch('/admin/preferences');const d=await r.json().catch(()=>({}))
+  if(!r.ok)return say(d.error||'读不到偏好，请回到对话重新打开。','err')
+  fill(d);save.disabled=true;say('')
+}
+document.querySelector('main').addEventListener('input',dirty)
+$('add-meal').onclick=()=>{group($('meals'),'meal');dirty()}
+$('add-alias').onclick=()=>{group($('aliases'),'alias');dirty()}
+save.onclick=async()=>{
+  save.disabled=true;say('正在保存…')
+  const r=await fetch('/admin/preferences',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())})
+  const d=await r.json().catch(()=>({}))
+  if(!r.ok){save.disabled=false;return say(d.error||'保存失败','err')}
+  fill(d.preferences);say('已保存。','ok')
+}
+load()
+fetch('/admin/info').then(r=>r.ok&&r.json()).then(d=>{if(d&&d.developer)$('dev').hidden=false})
+</script></body></html>

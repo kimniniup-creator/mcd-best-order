@@ -1,4 +1,4 @@
-# 任意 MCP Agent 安装与自检（0.8.3）
+# 任意 MCP Agent 安装与自检（0.8.4）
 
 模型名不等于宿主名：DeepSeek 可以运行在 DSH、Cursor 等不同应用中。先看当前应用、命令或配置界面，再选 host。无需斜杠命令、Skill 或钩子；MCP instructions、工具描述和文本结果自带流程，MCP prompts 的 `order_mcdonalds` 是可选入口。
 
@@ -9,7 +9,7 @@
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.3/coupon_split-0.8.3-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.4/coupon_split-0.8.4-py3-none-any.whl coupon-split
 ```
 
 ```sh

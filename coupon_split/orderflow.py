@@ -69,7 +69,7 @@ def address_hint(text):
     # no "送到"; the user describes which saved address by where it ends/starts: take the clause that says so
     if grounding.POSITIONED.search(text or ''):
         for clause in re.split(r'[，。,；;！!？?]', text):
-            if grounding.POSITIONED.search(clause) and DESCRIBES_SAVED.search(clause):
+            if grounding.POSITIONED.search(clause) and (DESCRIBES_SAVED.search(clause) or DESCRIBES_SAVED.search(text)):  # "送餐地址就用存的那个，X结尾的": the clause that says where it ends may be separate from the one that says it is a saved address
                 return clause.strip()
     return ''
 
@@ -88,7 +88,7 @@ async def saved_addresses(s, t):
 
 
 def source_of(element, key):
-    return {'last': 'saved_data', 'account': 'saved_data', 'nearest': 'lookup', 'utterance': 'user_utterance'}.get(element.get('sources', {}).get(key), 'default')
+    return {'last': 'saved_data', 'account': 'saved_data', 'nearest': 'lookup', 'utterance': 'user_utterance', 'preference': 'preference'}.get(element.get('sources', {}).get(key), 'default')
 
 
 def context_for(s, t, e, store_code):
@@ -259,8 +259,14 @@ async def apply(s, t, sid, interp, utterance, check_items=True, stores=None):
     e.setdefault('sources', {})
     resolved, ambiguous, missing, violations = {}, [], [], []
 
-    # ---- fulfillment
+    # ---- saved preferences fill only what the user did not say
     said = fulfillment_said(utterance)
+    filled = {}
+    if getattr(s, 'preferences', None) is not None:
+        from coupon_split.prefs import fill
+        interp, filled = fill(interp, s.preferences.read(cart['owner']), said)
+
+    # ---- fulfillment
     way = interp.get('fulfillment')
     if way and said and way != said:
         ambiguous.append({'slot': 'fulfillment', 'candidates': [said, way], 'ask': '用户原话里的取餐方式与你传入的不一致，需要问用户是自取、得来速还是外送'})
@@ -422,8 +428,19 @@ async def apply(s, t, sid, interp, utterance, check_items=True, stores=None):
                 last_utterance=utterance, **({'submitted': False, 'pending_plan_id': None} if changed_items or store is None else {}))
     if items and store:
         cart.update(submitted=True)
+    # Slots filled from saved preferences say so, in both the report and the order elements.
+    marks = {'fulfillment': 'fulfillment', 'take_way': 'takeWay', 'tableware': 'tableware', 'landmark': 'landmark', 'city': 'city', 'avoid': 'avoid'}
+    element_keys = {'fulfillment': 'fulfillment', 'take_way': 'takeWayCode', 'tableware': 'needTableware'}
+    for key, slot in marks.items():
+        if key in filled and slot in resolved:
+            resolved[slot]['source'] = 'preference'
+        if key in filled and key in element_keys and element_keys[key] in e:
+            e['sources'][element_keys[key]] = 'preference'
+    if 'foods' in filled and 'items' in resolved:
+        resolved['items']['expanded_from'] = filled['foods']
+    cart['elements'] = e
     return {'resolved': resolved, 'ambiguous': ambiguous, 'missing': missing, 'violations': violations,
-            'now': now.strftime('%Y-%m-%d %H:%M'), 'store': store}
+            'now': now.strftime('%Y-%m-%d %H:%M'), 'store': store, 'preferences_used': sorted(filled)}
 
 
 def violations_block_store(violations):
