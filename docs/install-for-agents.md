@@ -1,4 +1,4 @@
-# 任意 MCP Agent 安装与自检（0.8.2）
+# 任意 MCP Agent 安装与自检（0.8.3）
 
 模型名不等于宿主名：DeepSeek 可以运行在 DSH、Cursor 等不同应用中。先看当前应用、命令或配置界面，再选 host。无需斜杠命令、Skill 或钩子；MCP instructions、工具描述和文本结果自带流程，MCP prompts 的 `order_mcdonalds` 是可选入口。
 
@@ -9,7 +9,7 @@
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.2/coupon_split-0.8.2-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.3/coupon_split-0.8.3-py3-none-any.whl coupon-split
 ```
 
 ```sh
@@ -93,3 +93,5 @@ Cursor/Kiro 可用 `url`，VS Code 可用 `type:http` + `url`，Gemini CLI 的 S
 5. 把付款卡和付款页链接发给用户后用 `wait_payment` 等结果；只读查询不自行下单。模拟模式没有可用支付链接或真实订单；不要拿模拟付款卡冒称真实支付成功。
 
 安装自检不要下单。完整模拟测试须显式设 `COUPON_SPLIT_SIMULATE=true`、`ALLOW_REAL_ORDERS=false`；若宿主会清理环境，将这两个非秘密开关放进本插件配置的 env。仅看到 tools/list 或配置语法正确，只能记为“配置验证”，不能记为“宿主完整实测”。
+
+Codex 的配置里本服务标为 `required = true`：Codex 会等它启动完再开始第一轮，不然首轮可能还没有工具；代价是服务起不来（没装 uv、没网）时 Codex 会直接报错而不是悄悄继续。`setup --host codex-ide --uninstall --apply` 移除这个条目。

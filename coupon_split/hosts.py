@@ -15,7 +15,7 @@ import tomllib
 import uuid
 
 NAME = 'coupon-split'
-SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.2/coupon_split-0.8.2-py3-none-any.whl'
+SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.3/coupon_split-0.8.3-py3-none-any.whl'
 SOURCES = {
     # Paths and formats checked against each vendor's documentation.
     'dsh':'https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md',
@@ -214,7 +214,10 @@ def jsonc(text):
 
 
 def codex_block(entry):
-    text='[mcp_servers.coupon-split]\nstartup_timeout_sec = 120\nrequired = false\n'
+    # required = true: Codex starts its MCP servers while the first turn is already running; a required server is awaited, so the first
+    # turn has the tools (cold uvx environments: 3/3 with it, 2/3 without). Cost: if the server cannot start Codex says so instead of
+    # silently going on without it; `setup --uninstall` removes the entry.
+    text='[mcp_servers.coupon-split]\nstartup_timeout_sec = 120\nrequired = true\n'
     for key in ('command','args'):text+=key+' = '+json.dumps(entry[key],ensure_ascii=False)+'\n'
     text+='[mcp_servers.coupon-split.env]\n'
     for key,value in entry['env'].items():text+=json.dumps(key)+' = '+json.dumps(value)+'\n'
