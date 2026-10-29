@@ -14,7 +14,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-TTL_SECONDS = 600
+from coupon_split.ontology import CONFIRMATION_SECONDS as TTL_SECONDS, EXPIRED_PAGE_SECONDS  # the ontology owns the validity period
 # 0.7.8: there is NO exemption by host identity. clientInfo, User-Agent, environment variables and
 # anything else a client can report about itself prove nothing about a person having approved.
 # A real order needs a human confirmation the server itself can verify: an MCP elicitation form the
@@ -73,6 +73,13 @@ class ConfirmationStore:
                 if current['state'] in {'pending', 'approved', 'placing', 'creating'}:
                     return current
         return None
+
+    def live_until(self):
+        """Latest time the page service must stay for a confirmation that is still clickable or being processed: its validity
+        plus the ontology's grace, so that an expired link says so instead of refusing the connection. 0 if none."""
+        with self._db() as db:
+            rows = [json.loads(body) for (body,) in db.execute('SELECT body FROM confirmations')]
+        return max((r['created'] + TTL_SECONDS + EXPIRED_PAGE_SECONDS for r in rows if r['state'] in {'pending', 'approved', 'placing', 'creating'}), default=0)
 
     def transition(self, key, state, only_from=('pending',), **extra):
         """Atomic compare-and-set across processes. Returns the new record, or None if the state did not match.

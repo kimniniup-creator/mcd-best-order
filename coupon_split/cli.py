@@ -126,7 +126,23 @@ def main():
         setup(ALIASES.get(args.host,args.host),args.apply,args.action=='uninstall',args.project,args.home,args.config)
     except (ValueError,OSError) as exc:
         raise SystemExit('未修改配置：'+str(exc)) from None
+    if args.apply and args.action=='setup' and args.host!='generic' and not os.environ.get('COUPON_SPLIT_NO_WARM'):
+        warm_start()
     return
+
+
+def warm_start():
+    """Build the MCP environment once, now. Codex starts its MCP servers while the first turn is already running, so a cold
+    first start (download, environment build) can outlast the turn's first step; with the environment cached it takes seconds."""
+    import subprocess
+    from coupon_split.hosts import stdio_entry
+    entry=stdio_entry()
+    print('预热点餐服务（只拉取并构建运行环境，不连接麦当劳，不读写账户）……',flush=True)
+    try:
+        subprocess.run([entry['command'],*entry['args']],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=300)
+        print('预热完成。')
+    except (OSError,subprocess.TimeoutExpired):
+        print('预热没有完成（不影响使用，第一次启动会慢一些）。')
 
 
 def serve_http(port=0):

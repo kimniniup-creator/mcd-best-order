@@ -57,9 +57,21 @@ def fulfillment_said(text):
     return None
 
 
+SAME_PLACE = re.compile(r'^(?:还是|仍然|依然)?(?:送到|送去)?(?:同一个|同一|同样的|同样|原来的|原先的|刚才的|刚刚的|之前的|上一个|上一次的|一样的|相同的)(?:那个)?(?:地方|地址|位置|地点)?吧?$')
+DESCRIBES_SAVED = re.compile(r'(?:收货|配送|送货)?(?:地方|地址|位置)|已保存|保存的|存过|那条|那个')
+
+
 def address_hint(text):
     found = ADDRESS_HINT.search(text or '')
-    return found.group(1).strip() if found else ''
+    if found:
+        hint = found.group(1).strip()
+        return '' if SAME_PLACE.match(hint) else hint  # "送到同一个地方": no new address, the cart keeps its own
+    # no "送到"; the user describes which saved address by where it ends/starts: take the clause that says so
+    if grounding.POSITIONED.search(text or ''):
+        for clause in re.split(r'[，。,；;！!？?]', text):
+            if grounding.POSITIONED.search(clause) and DESCRIBES_SAVED.search(clause):
+                return clause.strip()
+    return ''
 
 
 def time_text(text):
@@ -122,6 +134,11 @@ async def ground_foods(s, t, e, store_code, store_name, foods, utterance=''):
     menu = (await s.upstream.call(t, 'query-meals', dict(context, storeCode=store_code)))['data']
     rows = menu_rows(menu)
     items, names, ambiguous, violations = [], [], [], []
+    total = re.search(r'(?:合计|一共|总共|共计|总计|加起来)\s*(\d+|[一两二三四五六七八九十]+)\s*(?:份|个|杯|套)', utterance or '')
+    if total and len(foods) == 1 and foods[0].get('quantity') is None and not re.search(r'(\d+|[一两二三四五六七八九十]+)\s*(?:个|份|杯|套)', foods[0]['phrase']):
+        # "再加一份同样的，合计两份": the user states the total, so the one food is that many
+        raw = total[1]
+        foods = [dict(foods[0], quantity=int(raw) if raw.isdigit() else '一二三四五六七八九十'.index(raw.replace('两', '二')) + 1)]
     for food in foods:
         phrase = food['phrase'].strip()
         specs = list(food.get('spec') or [])
@@ -130,6 +147,12 @@ async def ground_foods(s, t, e, store_code, store_name, foods, utterance=''):
             raw = counted[1]
             food = dict(food, quantity=int(raw) if raw.isdigit() else '一二三四五六七八九十'.index(raw.replace('两', '二')[-1]) + 1)
             phrase = (phrase[:counted.start()] + phrase[counted.end():]).strip() or phrase
+        for word in list(specs):
+            # a "spec" that is really part of the official name ("麦乐鸡" + "5块" = 麦乐鸡5块) names the dish, it does not modify it
+            whole = normalized_name(phrase + word)
+            named = [r for r in rows if normalized_name(r['name']) == whole] or [r for r in rows if whole in normalized_name(r['name'])]
+            if len(named) == 1:
+                phrase, specs = phrase + word, [w for w in specs if w != word]
         official = [r for r in rows if normalized_name(phrase) in normalized_name(r['name'])]
         core, extra = grounding.split_spec(phrase)
         for marker in grounding.size_markers(core):  # "中薯条" is the item 薯条 asked in size 中

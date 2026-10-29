@@ -15,6 +15,7 @@ from pathlib import Path
 from coupon_split.optimizer import quote, parse_cart, key, normalized, composition_key, specification_coverage, validate_quantities
 from coupon_split.upstream import UpstreamAuthError, UpstreamBusinessError, UpstreamTransportError, BUSY_TEXT
 from coupon_split import diagnostics
+from coupon_split.ontology import QUOTE_SECONDS
 
 # After create-order gives no clear answer we ask the account's order list at
 # these offsets (seconds). 120 s with a readable list and no new order is final.
@@ -80,6 +81,25 @@ class Service:
     def save(self, plan):
         self.db.execute("INSERT OR REPLACE INTO plans VALUES (?,?,?)", (plan["plan_id"], plan["owner"], json.dumps(plan, ensure_ascii=False)))
         self.db.commit()
+
+    def hold_until(self, now=None):
+        """Latest time at which some plan here still needs the page service: an order being created or verified
+        (up to one validity period), or an unpaid order that can still be paid or withdrawn (its pay deadline plus
+        the sweeper's one-minute margin). 0 when nothing does."""
+        now = time.time() if now is None else now
+        until = 0
+        for (body,) in self.db.execute("SELECT body FROM plans").fetchall():
+            plan = json.loads(body)
+            if plan.get("state") in {"placing", "verifying", "rollback_pending"}:
+                until = max(until, (plan.get("placing_started") or plan.get("created") or now) + QUOTE_SECONDS)
+            if plan.get("state") in {"awaiting_payment", "rollback_pending", "awaiting_coupon_return"}:
+                for order in plan.get("orders", []):
+                    if str(order.get("status", "10")) == "10":
+                        try:
+                            until = max(until, deadline(order["expirePayTime"]) + 90)
+                        except (KeyError, ValueError, TypeError):
+                            until = max(until, now + 90)
+        return until
 
     def load(self, plan_id, token):
         row = self.db.execute("SELECT body FROM plans WHERE id=? AND owner=?", (plan_id, owner(token))).fetchone()
@@ -147,7 +167,7 @@ class Service:
                 raise ValueError("确认凭证不匹配")
             if plan["state"] != "quoted":
                 return plan  # idempotency: replay never creates a second order
-            if time.time() - plan["created"] > 600:
+            if time.time() - plan["created"] > QUOTE_SECONDS:
                 raise ValueError("报价已过期")
             selected = next((p for p in plan["plans"] if p["option_id"] == option_id), None)
             if not selected:

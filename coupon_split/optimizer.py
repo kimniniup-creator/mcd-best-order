@@ -25,6 +25,8 @@ def parse_cart(items):
         if isinstance(item,dict):
             code,qty=str(item["productCode"]),str(item["quantity"])
         else:
+            if ":" not in str(item):
+                raise ValueError("items 的每一项是 商品码:数量（如 901120:1）或 {productCode, quantity} 对象，不接受餐品名称；会话里餐品已定时可以只传 session_id")
             code, qty = item.rsplit(":", 1)
         if not code.isdigit() or not qty.isdigit() or not 1 <= int(qty) <= 20:
             raise ValueError("商品格式应为 sku:数量，数量 1–20")

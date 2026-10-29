@@ -15,6 +15,9 @@ MODEL = FULL['model']
 VOCABULARY = {k: v for k, v in FULL.items() if k != 'model'}
 SLOTS, CONSTRAINTS, STATES = MODEL['slots'], MODEL['constraints'], MODEL['states']
 INVARIANTS = MODEL['invariants']
+CONFIRMATION_SECONDS = MODEL['validity']['confirmation_seconds']
+QUOTE_SECONDS = MODEL['validity']['quote_seconds']
+EXPIRED_PAGE_SECONDS = MODEL['validity']['expired_page_seconds']
 
 
 class _Missing(dict):

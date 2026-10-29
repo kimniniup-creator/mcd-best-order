@@ -100,11 +100,24 @@ def ground_time(when, store, now=None):
 DESCRIBES = re.compile(r'(?:末尾|结尾|尾部|最后|后面|开头|前面)(?:是|写着|写的是|为|有|带着|带)?|写着|写的是|叫做|名为|以前|之前|曾经|先前|早先|存过|保存过|保存的|存的|存下的|收藏的|那一个|那处|(?:吧|呢|啊|呀|哈|了)+$')
 
 
+POSITIONED = re.compile(r'(?:末尾|结尾|尾部|最后|开头)(?:是|写着|写的是|为|有|带着|带)?\s*([^的，。,;；、\s]{1,16})|(?:后面|前面)(?:是|写着|写的是|为|有|带着)\s*([^的，。,;；、\s]{1,16})')
+
+
+META_CLAUSE = re.compile(r'(?:不用|不必|不需要|无需|不要).{0,8}(?:抄|写|输入|报|说)|名字前面|抄了吧')
+
+
 def describing_words(hint):
     """The distinctive text in a description of a saved address ("以前存过、末尾写着X的那个地方" -> "X").
 
     Only wording that describes *which* address (where in it, that it was saved earlier) is peeled; the address text itself is kept.
     """
+    clauses = [c for c in re.split(r'[，。,;；]', hint or '') if c.strip()]
+    kept = [c for c in clauses if not META_CLAUSE.search(c)]
+    if kept and len(kept) < len(clauses):  # "…，名字前面的字不用我再抄了吧": talk about the wording, not an address
+        hint = '，'.join(kept)
+    named = POSITIONED.search(hint or '')
+    if named:  # "…里结尾有X的那条，名字前面的字不用再抄": the distinctive text is X; the rest is talk around it
+        return named.group(1) or named.group(2)
     text = re.sub(r'[\s，。,;；、]', '', hint or '')
     if not DESCRIBES.search(text):
         return hint or ''
@@ -231,6 +244,55 @@ def neighbour_specs(utterance, phrase):
     for text in ((before.group(0) if before else ''), (after.group(0) if after else '')):
         found += [w for w in re.findall(SPEC_TOKEN, text) if w not in found]
     return found
+
+
+SPEC_AXES = {axis: re.compile('|'.join(re.escape(w) for w in sorted((x for x in words if len(x) >= 2), key=len, reverse=True)))
+             for axis, words in MODEL['entities']['Spec']['axes'].items() if any(len(x) >= 2 for x in words)}
+CORRECTION = re.compile(r'改(?:成|为|用)?|换成|不对|说错|其实|纠正|更正')
+
+
+def user_spec_words(utterances):
+    """The spec words the user's own sentences put in force, oldest sentence first: on each axis the newest sentence that
+    mentions it decides; inside a sentence that corrects itself ("大杯，不对，中杯") only the last word counts."""
+    in_force = {}
+    for text in utterances:
+        for axis, pattern in SPEC_AXES.items():
+            found = [m.group(0) for m in pattern.finditer(text or '')]
+            if found:
+                in_force[axis] = [found[-1]] if CORRECTION.search(text) else list(dict.fromkeys(found))
+    return [w for words in in_force.values() for w in words]
+
+
+def spec_state(item, detail, spec, name=''):
+    """'not_offered' | 'applied' | 'not_applied': is this official spec met by this cart item (not guessed, read off the item)?"""
+    if in_official_name(spec, detail.get('name', ''), name):
+        return 'applied'
+    offered = False
+    rounds = detail.get('rounds', [])
+    for round_ in rounds:
+        matches = [c for c in round_['choices'] if spec in c.get('name', '') and c.get('available') is not False]
+        if matches:
+            offered = True
+            entry = next((r for r in item.get('roundList', []) if r['round'] == str(round_['id'])), None)
+            if entry and any(str(c['code']) == str(m['code']) for c in entry['comboItemList'] for m in matches):
+                return 'applied'
+    targets = [(item, detail)]
+    for entry in item.get('roundList', []):
+        round_ = next((r for r in rounds if str(r['id']) == entry['round']), None)
+        for child in entry['comboItemList']:
+            official = next((c for c in (round_ or {}).get('choices', []) if str(c['code']) == str(child['code'])), None)
+            if official:
+                targets.append((child, official))
+    for holder, node in targets:
+        for opt_name, code, key, _group, selected in _modification_options(node):
+            if opt_name == '标准' or not (opt_name == spec or spec in opt_name):
+                continue
+            offered = True
+            values = holder.get('modification', {}).get('values', [])
+            chosen = [v for v in values if str(v.get('code')) == code and v.get('key') == key]
+            if (chosen and chosen[0].get('quantity', 1) > 0) or (selected and not chosen):
+                return 'applied'
+    return 'not_applied' if offered else 'not_offered'
 
 
 def split_spec(phrase):

@@ -116,7 +116,9 @@ def order_state(data):
             # the cart's own quote: the session is where that quote is, not merely "items chosen"
             try:
                 quoted=service.load(cart['pending_plan_id'],token())['state']
-                if quoted=='quoted':node=quoted;data=dict(data,plan_id=cart['pending_plan_id'])  # only a live quote; a finished order is not this cart's state
+                # a live quote, or an order that is being created / verified / rolled back right now, is where this cart is
+                # (offering a new quote there would invite a second order); a finished order is not this cart's state
+                if quoted in {'quoted','placing','verifying','rollback_pending'}:node=quoted;data=dict(data,plan_id=cart['pending_plan_id'])
             except Exception:pass
     return node,onto.allowed_actions(node,has_plan=bool(data.get('plan_id')))
 
@@ -265,6 +267,8 @@ async def resolve_order(utterance: Annotated[str, Field(description='逐字复�
     用户没说的槽位留空；foods 是这一单完整的餐品清单，会替换之前的，可重复调用。
     """
     t=token();state=memory.read(owner(t))
+    missing_session=unknown_session(t,session_id,state)
+    if missing_session:return missing_session
     sid=session_id if session_id and carts.get(session_id) and carts[session_id]['owner']==owner(t) else ''
     if not sid:
         candidate=state.get('active_session','')
@@ -403,7 +407,7 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
     explicit_mode=incoming.get('fulfillment')
     state=memory.read(owner(t))
     active=carts.get(session_id) if session_id else carts.get(state.get('active_session',''))
-    if session_id and (not active or active['owner']!=owner(t)):raise ValueError('购物车不存在或不属于此账户')
+    if session_id and (not active or active['owner']!=owner(t)):raise session_missing(t,session_id)
     if active and active['owner']==owner(t) and (active.get('violations') or active.get('open_questions')):
         raise ValueError('购物车里还有没解决的问题，不能报价：'+'；'.join([v['fact'] for v in active.get('violations',[])]+[q['fact'] for q in active.get('open_questions',[])]))
     if not items and active and active.get('items'):
@@ -451,6 +455,17 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
         from coupon_split.optimizer import parse_cart, atom
         items=[atom(c,n) for c,n in parse_cart(items).items()]
     selected_specs=await validate_selected(t, store_code, items, context,fill_defaults=True)
+    # Ontology invariant: a spec word the user said that the dish officially offers is on the cart item, or there is no quote.
+    heard=list(active.get('meal_requests',[])) if active and active['owner']==owner(t) else []
+    if active and active['owner']==owner(t) and active.get('last_utterance'):heard.append(active['last_utterance'])
+    unmet=[]
+    for word in grounding.user_spec_words(heard):
+        for item in items:
+            detail=(await upstream.call(t,'query-meal-detail',dict(context,storeCode=store_code,code=item['productCode'])))['data']
+            if grounding.spec_state(item,detail,word)=='not_applied':
+                unmet.append(onto.violation('SPEC_NOT_APPLIED',phrase=detail.get('name',item['productCode']),spec=word))
+    if unmet:
+        raise ValueError('不能报价：'+'；'.join(f"SPEC_NOT_APPLIED {v['fact']}可行：{v['alternative']}" for v in unmet))
     plan = await service.quote(t,store_code,items,allow_combos,context)
     take=elements.get("takeWayCode")
     take_options=plan['plans'][0]['orders'][0]['takeWayList']
@@ -639,8 +654,8 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
         import hmac
         if not hmac.compare_digest(str(confirm_token),plan['confirm_token']):
             raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。')
-        if time.time()-plan['created']>600:
-            raise ValueError('报价已过期（超过 10 分钟），价格和优惠可能已变；确认凭证只对应当次报价。')
+        if time.time()-plan['created']>onto.QUOTE_SECONDS:
+            raise ValueError(f'报价已过期（超过 {onto.QUOTE_SECONDS//60} 分钟），价格和优惠可能已变；确认凭证只对应当次报价。')
         failure=confirmations.take_failure(owner(t),plan_id)
         if failure:raise ValueError(failure)
         # 3: a live confirmation page exists, the click authorises (words must not contradict it);
@@ -663,8 +678,17 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
             # Dead account authorisation is reported now, with the page that fixes it, not at some later step.
             url=await local_url()
             return result({'stage':'setup','setup_url':url+'/setup','needs_authorization':True,'links':{'setup_url':url+'/setup'}},f'麦当劳账户授权已失效，订单没有创建。授权页：[打开授权页]({url}/setup)；授权保存后需要重新报价和确认。')
-        pending=await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation,**({'_amount_note':amount_note} if amount_note else {})),claim)
+        # The re-check above takes seconds; the person's click may have placed the order meanwhile.
+        failure=confirmations.take_failure(owner(t),plan_id)
+        if failure:raise ValueError(failure)
+        plan=service.load(plan_id,t)
+        pending=None if plan['state']!='quoted' else await human_confirmation(ctx,t,plan,selected,option_id,dict(plan_id=plan_id,confirm_token=confirm_token,user_confirmation=user_confirmation,option_id=option_id,take_way=take_way,high_amount_confirmation=high_amount_confirmation,**({'_amount_note':amount_note} if amount_note else {})),claim)
         if pending is not None:return pending
+        if claim.get('proof')=='click' or plan['state']!='quoted':
+            # The click placed (or is placing) it: read the result back from the plan, whatever its state is now.
+            claim['proof']='click';plan=service.load(plan_id,t)
+            if plan['state']=='quoted':
+                raise ValueError('确认页的点击已收到，订单是否建成还在核对中；先用 wait_payment 或 get_cart 看结果，不要重新报价下单。')
     # 2: not quoted any more means the click already placed it; this only reads the result back.
     key = claim.get('key') if plan['state']=='quoted' else None
     if plan['state']=='quoted' and not key:
@@ -868,9 +892,42 @@ bridge_server = None
 bridge_task = None
 
 
+def session_facts(cart):
+    """What a session already holds, as facts: where it is and what was settled (no sources, no secrets)."""
+    elements={k:v for k,v in (cart.get('elements') or {}).items() if k!='sources' and v not in (None,'',[],{})}
+    return {'state':onto.state_name(cart=cart),'items':cart.get('item_summary') or [i.get('productCode') for i in cart.get('items',[])],
+            'store_code':cart.get('store_code'),'elements':elements}
+
+
+def unknown_session(t, session_id, state):
+    """The host named a session that does not exist for this account: say so, show the latest valid one, open nothing."""
+    if not session_id:return None
+    named=carts.get(session_id)
+    if named and named['owner']==owner(t):return None
+    latest=carts.get(state.get('active_session',''))
+    latest=latest if latest and latest['owner']==owner(t) else None
+    data={'stage':'session_unknown','unknown_session_id':session_id,'session_created':False}
+    text=f'会话 {session_id} 不存在或已过期，没有新开会话，购物车没有变化。'
+    if latest:
+        data['latest_session']=dict(session_facts(latest),session_id=state['active_session'])
+        text+=f'这个账户最近的有效会话是 {state["active_session"]}，已定：{json.dumps(session_facts(latest),ensure_ascii=False)}。不传 session_id 才会开始新的会话。'
+    else:text+='这个账户没有有效会话；不传 session_id 才会开始新的会话。'
+    return result(data,text)
+
+
+def session_missing(t, session_id):
+    """The named session is not this account's: say so, and show the latest valid one (a mistyped id is one step from it)."""
+    state=memory.read(owner(t))
+    latest=carts.get(state.get('active_session',''))
+    text=f'会话 {session_id} 不存在、已过期或不属于此账户，购物车没有变化。'
+    if latest and latest['owner']==owner(t):
+        text+=f'这个账户最近的有效会话是 {state["active_session"]}，已定：{json.dumps(session_facts(latest),ensure_ascii=False)}。'
+    return ValueError(text)
+
+
 def owned_cart(session_id):
     cart=carts.get(session_id)
-    if not cart or cart['owner']!=owner(token()):raise ValueError('购物车不存在或不属于此账户')
+    if not cart or cart['owner']!=owner(token()):raise session_missing(token(),session_id)
     return cart
 
 
@@ -944,7 +1001,7 @@ async def local_url():
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 @start_guidance
-async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: Annotated[bool | None, Field(description='用户明确要你配餐时才为 true；用户已说出具体餐品或黑话时不填')] = None, plan: Annotated[Literal['帮我配','我自己点','照上次那份'] | None, Field(description='用户明确说了其中一种才填；用户只是说出餐品时不填')] = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮传前一轮返回的 session_id（否则开启新会话，丢失人数、预算、忌口）；全新对话留空。')] = "", foods: Annotated[list[str] | None, Field(description='可选。结合上下文理解本轮用户真正要点的餐品，每项一个标准餐品名加数量，如 ["麦辣鸡腿堡 2份","中薯"]；“刚才那个”“再来一份一样的”换成具体餐品，“不要麦辣的”这类否定的餐品不写，错别字写正确名称。本轮没提餐品就不传。utterance 仍逐字传原话。')] = None) -> CallToolResult:
+async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本轮最后一条用户消息。严禁拼接上一轮原话、历史摘要、已知餐品或要素；历史由服务端自动保留。')], recommend: Annotated[bool | None, Field(description='用户明确要你配餐时才为 true；用户已说出具体餐品或黑话时不填')] = None, plan: Annotated[Literal['帮我配','我自己点','照上次那份'] | None, Field(description='用户明确说了其中一种才填；用户只是说出餐品时不填')] = None, ctx: Context | None = None, session_id: Annotated[str, Field(description='同一对话后续每轮传前一轮返回的 session_id（不传则开启新会话，丢失人数、预算、忌口；传了不存在的 id 不会新开会话，只返回事实和最近的有效会话）；全新对话留空。')] = "", foods: Annotated[list[str] | None, Field(description='可选。结合上下文理解本轮用户真正要点的餐品，每项一个标准餐品名加数量，如 ["麦辣鸡腿堡 2份","中薯"]；“刚才那个”“再来一份一样的”换成具体餐品，“不要麦辣的”这类否定的餐品不写，错别字写正确名称。本轮没提餐品就不传。utterance 仍逐字传原话。')] = None) -> CallToolResult:
     """开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。
     服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；
     返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。
@@ -987,6 +1044,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if onboarding.get('utterance'):
         memory.write('onboarding',{})
     t=token();state=memory.read(owner(t))
+    missing_session=unknown_session(t,session_id,state)
+    if missing_session:return missing_session
     named=carts.get(session_id) if session_id else None
     if named and named['owner']==owner(t) and session_id!=state.get('active_session',''):
         state['active_session']=session_id  # the session the host names is the one being continued, whichever was remembered last
@@ -1669,6 +1728,10 @@ async def human_confirmation(ctx, t, plan, selected, option_id, call_args, claim
         # the person can still confirm on the page, or simply not click.
     first=record is None
     if first:
+        if service.load(plan['plan_id'],t)['state']!='quoted':
+            # A click finished the order after this call began: nothing to confirm, read the result back.
+            if claim is not None:claim['proof']='click'
+            return None
         record=confirmations.create(account,plan['plan_id'],option_id,take,price,summary)
     else:
         # Called again after the link was shown: wait for the person's click.
@@ -1771,7 +1834,7 @@ async def confirm_page(request):
             plan=next((json.loads(body) for body, in service.db.execute('SELECT body FROM plans WHERE id=?',(record['plan_id'],))),None)
             if not plan or plan['state']!='quoted':
                 return JSONResponse({'error':'这份报价已经处理过或已失效'},status_code=409,headers=headers)
-            if time.time()-plan['created']>600:
+            if time.time()-plan['created']>onto.QUOTE_SECONDS:
                 confirmations.transition(key,'expired',('pending','approved'))
                 return JSONResponse({'error':'报价已过期，请回到对话重新报价','state':'expired'},status_code=409,headers=headers)
             return JSONResponse(await approve_and_place(record,plan),headers=headers)

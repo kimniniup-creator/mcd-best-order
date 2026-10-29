@@ -1,8 +1,11 @@
 """Per-state-directory page service, independent of short-lived stdio rounds.
 
 Only the local authorized credential is recovered, never a credential from a cart.
-The launcher is serialized; the page service uses a random loopback port and exits
-when its MCP owners exit. The cart itself survives for 24 hours. It never binds or changes the legacy port.
+The launcher is serialized; the page service uses a random loopback port. It outlives its MCP owners:
+a host may start the MCP process per turn or the person may close the chat, and the confirmation link
+must keep working for its validity period (ontology `validity`) and while an unpaid order can still be
+paid or withdrawn. It exits when no owner is alive and nothing holds it. The cart itself survives for
+24 hours. It never binds or changes the legacy port.
 """
 import asyncio
 import hashlib
@@ -66,8 +69,16 @@ def ensure_bridge(root):
             # The inspector must retain the owner's mode to retract expiring
             # unpaid orders. Read-only payment tools never perform this write.
             env=dict(os.environ,COUPON_SPLIT_HOME=str(root),COUPON_SPLIT_STDIO='1',COUPON_SPLIT_BRIDGE_INSTANCE=instance,PYTHONUTF8='1')
+            command=[sys.executable,'-m','coupon_split.bridge','--home',str(root),'--instance',instance]
             with (root/'bridge.stderr').open('ab') as log:
-                child=subprocess.Popen([sys.executable,'-m','coupon_split.bridge','--home',str(root),'--instance',instance],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                # The page service must not die with the MCP process: leave the host's process group / job
+                # (a host that kills its child's tree on exit would take the confirmation page with it).
+                if os.name=='nt':
+                    base=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_NEW_PROCESS_GROUP
+                    try:child=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=base|subprocess.CREATE_BREAKAWAY_FROM_JOB)
+                    except OSError:child=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=base)  # job forbids breakaway
+                else:
+                    child=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,start_new_session=True)
             _children[str(root)]=child
             for _ in range(1200):
                 if child is not None and child.poll() is not None:raise RuntimeError('点餐页服务启动失败，请重试')
@@ -93,6 +104,7 @@ async def run():
     target=root/'bridge.json';temp=root/'bridge.tmp'
     temp.write_text(json.dumps(value),encoding='utf-8');os.replace(temp,target)
     async def expire():
+        held_checked=0
         while True:
             await asyncio.sleep(.25)
             leases=[]
@@ -100,7 +112,14 @@ async def run():
                 try:leases.append(json.loads(file.read_text(encoding='utf-8')))
                 except (ValueError,OSError):pass
             if not any(v.get('active') and process_alive(v['pid']) for v in leases):
-                service.should_exit=True;return
+                # No MCP owner is left. A link already issued stays usable for its validity period, and an
+                # unpaid order can still be paid or withdrawn; only when nothing holds the page do we leave.
+                if time.monotonic()-held_checked>=1:
+                    held_checked=time.monotonic()
+                    try:hold=max(s.confirmations.live_until(),s.service.hold_until())
+                    except Exception:hold=time.time()+5  # cannot tell: stay up, retry
+                    if time.time()>hold:
+                        service.should_exit=True;return
             with s.carts.connect() as db:
                 latest=db.execute('SELECT MAX(expires) FROM carts').fetchone()[0] or 0
             if time.time()>max(value['expires'],latest):

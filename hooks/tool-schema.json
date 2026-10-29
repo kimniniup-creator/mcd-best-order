@@ -1597,7 +1597,7 @@
         },
         "session_id": {
           "default": "",
-          "description": "同一对话后续每轮传前一轮返回的 session_id（否则开启新会话，丢失人数、预算、忌口）；全新对话留空。",
+          "description": "同一对话后续每轮传前一轮返回的 session_id（不传则开启新会话，丢失人数、预算、忌口；传了不存在的 id 不会新开会话，只返回事实和最近的有效会话）；全新对话留空。",
           "title": "Session Id",
           "type": "string"
         },

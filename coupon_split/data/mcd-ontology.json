@@ -66,6 +66,7 @@
       "ITEM_SOLD_OUT": {"slot": "items", "fact": "「{phrase}」对应的商品在{store}当前不在售或已售罄。", "alternative": "同类在售商品：{alternatives}"},
       "ITEM_AMBIGUOUS": {"slot": "items", "fact": "「{phrase}」在{store}对应多个商品：{options}。", "alternative": "问用户是哪一个"},
       "ITEM_NOT_OFFERED_FOR_WAY": {"slot": "items", "fact": "{detail}", "alternative": "换一道餐品，或改一种取餐方式再查"},
+      "SPEC_NOT_APPLIED": {"slot": "spec", "fact": "用户说了「{spec}」，「{phrase}」官方有这个选项，但购物车里的这份没有落到它。", "alternative": "用 resolve_order 的 foods[].spec 把规格落到这份餐品后再报价；用户若已改口，以最新说法为准"},
       "SPEC_NOT_OFFERED": {"slot": "spec", "fact": "「{phrase}」没有「{spec}」这个官方规格；官方选项是：{options}。", "alternative": "问用户选哪一个官方选项，规格不近似替换"},
       "FULFILLMENT_STORE_MISMATCH": {"slot": "fulfillment", "fact": "这家店是按「{store_way}」查到的，和现在的取餐方式「{way}」不一致。", "alternative": "按新的取餐方式重新查门店"},
       "AMOUNT_OVER_LIMIT": {"slot": "items", "fact": "这一单报价超过 ¥200，确认时必须带金额。", "alternative": "确认句写成「确认下单 ¥金额」"},
@@ -95,6 +96,12 @@
       "expired": {"about": "已过期", "terminal": true, "actions": ["mcd_start", "resolve_order"]}
     },
     "replyRequiresAbout": "这些字段的内容用户必须在你的回复里看到：用户看不到工具返回，只看得到你发的消息；服务端无法看到你的回复，也不代为转达",
+    "validity": {
+      "about": "确认页链接和报价的有效期（秒，自发出时算起）。链接发出后，即使发起它的对话进程已退出，页面服务仍保持到有效期结束，以及仍有待付款订单需要核验或撤回的期间；有效期内可确认、建单、看付款页、撤回，过期后只显示事实（页面服务在过期后再留 expired_page_seconds 秒，让过期链接显示说明而不是打不开），不再建单",
+      "confirmation_seconds": 900,
+      "quote_seconds": 900,
+      "expired_page_seconds": 600
+    },
     "invariants": [
       "真实下单只认人工确认：确认页上的点击，或确认弹窗里填回与报价一致的实付金额后接受",
       "不得代造、拼接或补写用户的确认原文，user_confirmation 只能逐字复制用户最后一条消息",

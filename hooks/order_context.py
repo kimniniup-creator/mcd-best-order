@@ -29,7 +29,7 @@ def wait_for_host_mcp(timeout=8):
 
 def startup_context():
     ready=wait_for_host_mcp()
-    message=('点餐工具已连接。' if ready else '点餐工具尚未连接，可能仍在启动或启动失败；请检查 uv 和网络，再重开对话。')+'工具可用后直接调用 mcd_start，按返回协议继续；全程中文，无需 shell 读取 SKILL.md。工具尚未出现时说“服务启动中，请稍候再说一次”；不要编造已连接或报价。'
+    message=('点餐工具已连接。' if ready else '点餐工具尚未连接，可能仍在启动或启动失败；请检查 uv 和网络，再重开对话。')+'点餐按 MCP instructions 的本体概要和各工具返回的 state / allowed_actions 判断；全程中文，无需 shell 读取 SKILL.md。工具列表里暂时没有点餐工具是启动时序；不要编造已连接或报价。'
     return {'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':message}}
 
 

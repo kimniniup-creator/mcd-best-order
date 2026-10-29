@@ -94,7 +94,7 @@ async def test_expired_wrong_account_and_tamper_are_rejected(tmp_path):
     api=Fixture();service=Service(api,str(tmp_path/'plans.db'));p=plan();service.save(p)
     with pytest.raises(ValueError):await service.place('other',p['plan_id'],p['confirm_token'])
     with pytest.raises(ValueError):await service.place('fixture',p['plan_id'],'wrong')
-    p['created']-=601;service.save(p)
+    p['created']-=__import__('coupon_split.ontology',fromlist=['x']).QUOTE_SECONDS+1;service.save(p)
     with pytest.raises(ValueError):await service.place('fixture',p['plan_id'],p['confirm_token'])
     p['created']=time.time();p['plans'][0]['orders'][0]['request']['items'][0]['quantity']=2;service.save(p)
     with pytest.raises(ValueError):await service.place('fixture',p['plan_id'],p['confirm_token'])

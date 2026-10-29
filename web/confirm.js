@@ -4,7 +4,7 @@ function render(v){
   const s=v.summary,card=$('#card');
   $('#summary').textContent=s.store+' · '+s.way+' · 实付 ¥'+s.price_yuan;
   if(v.state!=='pending'){if(v.state==='placing'||v.state==='creating')setTimeout(load,800);
-    const text={approved:'已确认，订单正在创建。回到对话看结果。',placing:'已确认，正在创建订单……',declined:'已取消，没有创建订单。',used:'已确认，订单已创建。回到对话看付款信息；不想要就点下面的“撤回这单”，或在对话里说一声，会立即撤回。',failed:'没有下成，订单没有创建，也没有扣钱。回到对话看原因。',revoked:'这次下单已撤回，订单没有创建，也没有扣钱。',failure_reported:'没有下成，订单没有创建，也没有扣钱。回到对话看原因。',expired:'这个确认已过期，请回到对话重新确认。'}[v.state]||'这个确认已失效。';
+    const text={approved:'已确认，订单正在创建。回到对话看结果。',placing:'已确认，正在创建订单……',declined:'已取消，没有创建订单。',used:'已确认，订单已创建。回到对话看付款信息；不想要就点下面的“撤回这单”，或在对话里说一声，会立即撤回。',failed:'没有下成，订单没有创建，也没有扣钱。回到对话看原因。',revoked:'这次下单已撤回，订单没有创建，也没有扣钱。',failure_reported:'没有下成，订单没有创建，也没有扣钱。回到对话看原因。',expired:'这个确认链接已超过有效期，没有创建订单，也没有扣钱。要下单请回到对话重新确认。'}[v.state]||'这个确认已失效。';
     const real={awaiting_payment:'订单已创建，等待付款。回到对话看付款信息；不想要就点下面的“撤回这单”，或在对话里说一声，会立即撤回。',paid:'订单已付款，没有待办。取餐信息回到对话或付款页查看。',partial:'部分订单已付款，其余已撤回或已过期。详情在付款页。',withdrawn:'这笔订单已撤回，没有扣钱。',expired:'这笔订单超过付款时间，已过期撤回，没有付款也没有扣钱。',failed:'没有下成，订单没有创建，也没有扣钱。回到对话看原因。',verifying:'下单结果还在向麦当劳核对中，请不要重新下单。回到对话看结果。'}[v.order_state];
     const shown=(v.state==='used'||v.state==='failure_reported'||v.state==='creating')&&real?real:text;
     // A withdrawn / expired / failed order has nothing left to pay: no payment link, only the result.
