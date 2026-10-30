@@ -225,7 +225,27 @@ def in_official_name(spec, *names):
     return bool(found) and any(found[1] in name for name in names if name)
 
 
-SPEC_TOKEN = '|'.join(re.escape(w) for w in SPEC_WORDS if len(w) >= 2)
+# Words that mean exactly an official option ("不要冰块" is "去冰"). Declared in the ontology, never guessed from similarity.
+SPEC_SYNONYMS = {w: official for official, words in MODEL['entities']['Spec'].get('synonyms', {}).items() for w in words}
+SYNONYM_FIRST = sorted(SPEC_SYNONYMS, key=len, reverse=True)
+SPEC_TOKEN = '|'.join(re.escape(w) for w in sorted({*SPEC_WORDS, *SPEC_SYNONYMS}, key=len, reverse=True) if len(w) >= 2)
+# A removal the user asked for that is not a known spec word ("不要香菜"): it is looked up in the dish's official options, never dropped.
+NEGATED = re.compile(r'(?:不要|不加|不放|不用|别放|别加|去掉)([^，,、 的\d]{1,4})')
+
+
+def canonical_spec(word):
+    return SPEC_SYNONYMS.get(word, word)
+
+
+def spec_variants(word):
+    """The official option names a spoken spec word can be: itself, its declared synonym, or the removal spelled the way menus spell it."""
+    word = canonical_spec(word)
+    found = NEGATED.fullmatch(word)
+    if not found:
+        return [word]
+    what = found.group(1)
+    what = '冰' if what == '冰块' else what
+    return list(dict.fromkeys([word, '去' + what, '不要' + what, '不加' + what, '无' + what]))
 BEFORE = re.compile(r'(?:' + SPEC_TOKEN + r'|[的、，, ])+$')
 AFTER = re.compile(r'^[（(]?(?:' + SPEC_TOKEN + r'|[的、 ])+')
 
@@ -242,11 +262,11 @@ def neighbour_specs(utterance, phrase):
     after = AFTER.match(utterance[at + len(phrase):])
     found = []
     for text in ((before.group(0) if before else ''), (after.group(0) if after else '')):
-        found += [w for w in re.findall(SPEC_TOKEN, text) if w not in found]
+        found += [w for w in map(canonical_spec, re.findall(SPEC_TOKEN, text)) if w not in found]
     return found
 
 
-SPEC_AXES = {axis: re.compile('|'.join(re.escape(w) for w in sorted((x for x in words if len(x) >= 2), key=len, reverse=True)))
+SPEC_AXES = {axis: re.compile('|'.join(re.escape(w) for w in sorted((x for x in [*words, *(k for k, v in SPEC_SYNONYMS.items() if v in words)] if len(x) >= 2), key=len, reverse=True)))
              for axis, words in MODEL['entities']['Spec']['axes'].items() if any(len(x) >= 2 for x in words)}
 CORRECTION = re.compile(r'改(?:成|为|用)?|换成|不对|说错|其实|纠正|更正')
 
@@ -257,7 +277,7 @@ def user_spec_words(utterances):
     in_force = {}
     for text in utterances:
         for axis, pattern in SPEC_AXES.items():
-            found = [m.group(0) for m in pattern.finditer(text or '')]
+            found = [canonical_spec(m.group(0)) for m in pattern.finditer(text or '')]
             if found:
                 in_force[axis] = [found[-1]] if CORRECTION.search(text) else list(dict.fromkeys(found))
     return [w for words in in_force.values() for w in words]
@@ -296,15 +316,23 @@ def spec_state(item, detail, spec, name=''):
 
 
 def split_spec(phrase):
-    """Peel official-spec words (大杯, 去冰 ...) off a food phrase. Returns (core, [specs])."""
+    """Peel official-spec words (大杯, 去冰 ...), their declared synonyms (不要冰块) and spoken removals (不要香菜) off a food phrase. Returns (core, [specs])."""
     specs = []
     core = phrase
+    for word in SYNONYM_FIRST:
+        if word in core and len(core.replace(word, '')) >= 1:
+            core = core.replace(word, canonical_spec(word))
     for word in SPEC_WORDS:
         if len(word) >= 2 and word in core and len(core.replace(word, '')) >= 1:
             specs.append(word)
             core = core.replace(word, '')
+    for found in NEGATED.finditer(core):
+        if len(core.replace(found.group(0), '')) >= 1:
+            specs.append(found.group(0))
+    for word in specs:
+        core = core.replace(word, '')
     core = re.sub(r'[()（）\s]', '', core)
-    return core.strip(), specs
+    return core.strip('的').strip(), specs
 
 
 def apply_specs(item, detail, specs, phrase='', name=''):
@@ -315,6 +343,10 @@ def apply_specs(item, detail, specs, phrase='', name=''):
     """
     applied, problems = [], []
     rounds = detail.get('rounds', [])
+    # A spec that picks a round choice (中杯 -> 可乐中杯) replaces the choice object, so it goes first: a modification
+    # (去冰) put on the old choice would be lost. The order must not depend on how the words were spelled or sorted.
+    specs = sorted(dict.fromkeys(canonical_spec(w) for w in specs),
+                   key=lambda w: 0 if any(w in c.get('name', '') and c.get('available') is not False for r in rounds for c in r['choices']) else 1)
     for spec in specs:
         hit = False
         if in_official_name(spec, detail.get('name', ''), name):
@@ -353,7 +385,7 @@ def apply_specs(item, detail, specs, phrase='', name=''):
                     targets.append((child, official))
         for holder, node in targets:
             options = _modification_options(node)
-            found = next((o for o in options if o[0] == spec), None) or next((o for o in options if spec in o[0] and o[0] != '标准'), None)
+            found = next((o for o in options if o[0] in spec_variants(spec)), None) or next((o for o in options if spec in o[0] and o[0] != '标准'), None)
             if found:
                 name, code, key, group, selected = found
                 values = holder.setdefault('modification', {}).setdefault('values', [])
@@ -365,5 +397,8 @@ def apply_specs(item, detail, specs, phrase='', name=''):
                 break
         if not hit:
             options = spec_options(detail)
-            problems.append(violation('SPEC_NOT_OFFERED', phrase=phrase or detail.get('name', ''), spec=spec, options='、'.join(options) if options else '这个商品没有可选规格，只有官方默认'))
+            official = detail.get('name', '')
+            # The menu lists "薯条", the product detail says "薯条中": the size is in the official name, so say it.
+            only_default = '这个商品没有可选规格，只有官方默认' + ('（官方全名「%s」）' % official if official and official != (phrase or '') else '')
+            problems.append(violation('SPEC_NOT_OFFERED', phrase=phrase or official, spec=spec, options='、'.join(options) if options else only_default))
     return item, applied, problems

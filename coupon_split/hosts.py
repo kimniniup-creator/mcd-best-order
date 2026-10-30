@@ -15,7 +15,7 @@ import tomllib
 import uuid
 
 NAME = 'coupon-split'
-SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.4/coupon_split-0.8.4-py3-none-any.whl'
+SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.0/coupon_split-0.9.0-py3-none-any.whl'
 SOURCES = {
     # Paths and formats checked against each vendor's documentation.
     'dsh':'https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md',
@@ -240,7 +240,8 @@ def render(host, original, entry, uninstall=False):
                 text+='\n['+prefix+']\ndefault_tools_approval_mode = "auto"\n'
             else:text+='\n'+codex_block(entry)
             for tool in ('resolve_order','quote_best','propose_cart','wait_payment','pay_card','withdraw_order','place_orders','cancel_plan'):
-                mode='prompt' if tool in ('place_orders','cancel_plan') else 'approve'
+                from coupon_split.humanconfirm import human_confirm_enabled
+                mode='prompt' if tool=='cancel_plan' or (tool=='place_orders' and human_confirm_enabled()) else 'approve'  # internal-tool mode: nothing to ask the person at place_orders
                 text+='\n['+prefix+'.tools.'+tool+']\napproval_mode = '+json.dumps(mode)+'\n'
         tomllib.loads(text)
         return text

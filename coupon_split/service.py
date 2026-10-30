@@ -190,7 +190,12 @@ class Service:
                 req.update({k:v for k,v in plan.get("order_elements",{}).items() if k in {"takeWayCode","needTableware"} and v is not None})
                 if req.get("beType")==2:req.pop("takeWayCode",None)
                 if not self.upstream.allow_real:
-                    return {"orderId": "dry-"+uuid.uuid4().hex, "orderStatus": "模拟 · 未下单", "status": "10", "realTotalAmount": f"{order['price']/100:.2f}", "expirePayTime": time.time()+900, "payH5Url": None, "price": order["price"], "productList": order["productList"]}
+                    fake_id = "dry-"+uuid.uuid4().hex
+                    # internal-tool mode: the simulated pending order carries an official-shaped pay link (a made-up order id), so the
+                    # whole path from one sentence to a payment page can be exercised without create-order
+                    from coupon_split.humanconfirm import human_confirm_enabled
+                    fake_pay = None if human_confirm_enabled() else "https://m.mcd.cn/mcp/scanToPay?orderId="+fake_id
+                    return {"orderId": fake_id, "orderStatus": "模拟 · 未下单", "status": "10", "realTotalAmount": f"{order['price']/100:.2f}", "expirePayTime": time.time()+900, "payH5Url": fake_pay, "price": order["price"], "productList": order["productList"]}
                 started = time.monotonic()
                 try:
                     response = await self.upstream.call(token, "create-order", req)

@@ -60,6 +60,8 @@ conversation_id = secrets.token_urlsafe(24)
 store_context = {}
 menu_context = {}
 from coupon_split.protocol import INSTRUCTIONS, RISK_NOTICE
+from coupon_split.humanconfirm import human_confirm_enabled, max_order_cents
+HUMAN_AT_IMPORT = human_confirm_enabled()  # descriptions and annotations are fixed at import; behaviour is read per call
 import sys
 from coupon_split import ontology as onto, grounding, orderflow
 mcp = FastMCP("最优下单", instructions=INSTRUCTIONS, stateless_http=True, json_response=True)
@@ -144,6 +146,7 @@ def start_guidance(fn):
     async def wrapped(*args,**kwargs):
         response=await fn(*args,**kwargs)
         data=response.structuredContent
+        if not RISK_NOTICE or not human_confirm_enabled():return response  # internal-tool mode: no explanatory notice
         notice_key='risk-notice-'+owner(credential.get() or UPSTREAM_TOKEN or 'unauthorized')
         if not memory.read(notice_key).get('shown'):
             old_text=data['display_markdown']
@@ -399,7 +402,10 @@ async def get_item_detail(store_code: str, product_code: str, elements: OrderEle
     return result({'detail':detail,'default_item':default_item(detail)},detail.get('name',product_code)+'：可以按官方默认规格，也可以更换下面的选项。')
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=True))
+QUOTE_DIRECT_DESCRIPTION = '向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。总价超过单次上限、或还差堂食/外带时不建单，返回报价和缺的事实。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。'
+
+
+@mcp.tool(description=None if HUMAN_AT_IMPORT else QUOTE_DIRECT_DESCRIPTION,annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=not HUMAN_AT_IMPORT,idempotentHint=False,openWorldHint=True))
 async def quote_best(items: list[str] | list[dict] | None = None, store_code: str = "", allow_combos: bool = True, elements: OrderElements | None = None, session_id: str = "") -> CallToolResult:
     """向麦当劳核价，得到用户要看的价格和确认凭证，并在本地保存方案；不创建上游订单。用户看到报价之前不能确认下单；核价只是问价，不产生订单、不扣款，不用先征得用户同意。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。"""
     t=token()
@@ -408,6 +414,12 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
     state=memory.read(owner(t))
     active=carts.get(session_id) if session_id else carts.get(state.get('active_session',''))
     if session_id and (not active or active['owner']!=owner(t)):raise session_missing(t,session_id)
+    if not human_confirm_enabled() and not items and active and active['owner']==owner(t) and active.get('pending_plan_id'):
+        # the same cart again: an order that is being created, verified or waiting for payment is shown, never created a second time
+        try:prior=service.load(active['pending_plan_id'],t)
+        except Exception:prior=None
+        stale = prior and prior['state'] == 'awaiting_payment' and prior.get('orders') and all(deadline(o['expirePayTime']) < time.time() for o in prior['orders'])
+        if prior and prior['state'] in LIVE_ORDER_STATES and not stale:return direct_result(prior,session_id or state.get('active_session',''))  # unpaid past its deadline: the person may order the same again
     if active and active['owner']==owner(t) and (active.get('violations') or active.get('open_questions')):
         raise ValueError('购物车里还有没解决的问题，不能报价：'+'；'.join([v['fact'] for v in active.get('violations',[])]+[q['fact'] for q in active.get('open_questions',[])]))
     if not items and active and active.get('items'):
@@ -500,6 +512,7 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
     memory.write(owner(t),dict(previous,active_session=sid))
     data=quote_summary(plan)
     data.update(session_id=sid)
+    if not human_confirm_enabled():return await direct_after_quote(t,plan,sid,data)
     return result(data,markdown(plan))
 
 
@@ -640,8 +653,77 @@ async def withdraw_by_words(t, plan, option_id):
     return result(data,note+'\n\n'+markdown(plan))
 
 
-@mcp.tool(meta={"anthropic/requiresUserInteraction":True}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')], option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+LIVE_ORDER_STATES = {'placing', 'verifying', 'awaiting_payment', 'rollback_pending'}
+
+
+def payment_pages(plan):
+    from coupon_split import staticpay
+    return staticpay.write_pages(plan, runtime / 'payments')
+
+
+def direct_view(plan, session_id=''):
+    """An order waiting for payment in internal-tool mode: facts the reply needs, and the shortest text that carries them."""
+    pages = payment_pages(plan)
+    total = sum(o['price'] for o in plan['orders'])
+    links = [dict(n=p['n'], amount_yuan=f"{p['amount_cents']/100:.2f}", url=p['mobile_url'], file=p['path']) for p in pages]  # the pay-before time is on the page, not in the facts
+    lines = [f"合计 ¥{total/100:.2f}"] if len(links) > 1 else []
+    lines += [f"¥{l['amount_yuan']} 付款：{l['url'] or '见二维码页'}　电脑扫码：{l['file']}" for l in links]
+    text = '\n'.join(lines)
+    data = dict(plan_id=plan['plan_id'], state=plan['state'], order_count=len(links), total_yuan=f"{total/100:.2f}", payment_links=links,
+                simulated=bool(plan.get('dry_run')), reply_format=onto.MODEL['reply_format']['after_order'], links={}, stage='placed')
+    if session_id:data['session_id'] = session_id
+    return result(data, text)
+
+
+def direct_result(plan, session_id=''):
+    if plan['state'] == 'awaiting_payment' and plan.get('orders'):return direct_view(plan, session_id)
+    return result(dict(public(plan), session_id=session_id) if session_id else public(plan), markdown(plan))
+
+
+async def direct_after_quote(t, plan, sid, data):
+    """quote_best in internal-tool mode: build the order(s) of the cheapest plan now, unless a fact stops it."""
+    selected = plan['plans'][0]
+    if plan.get('elements_pending') or not plan.get('elements_validated'):
+        return result(data, f"最低价 ¥{selected['price']/100:.2f}，还差：" + '、'.join({'takeWayCode': '堂食/外带'}.get(k, k) for k in plan.get('elements_pending', [])))
+    if selected['price'] > max_order_cents():
+        data.update(over_limit=dict(limit_yuan=f"{max_order_cents()/100:.2f}", price_yuan=f"{selected['price']/100:.2f}"))
+        return result(data, f"总价 ¥{selected['price']/100:.2f} 超过单次上限 ¥{max_order_cents()/100:.2f}，没有建单。")
+    placed = await place_direct(t, plan, selected['option_id'], plan['confirm_token'])
+    return direct_result(placed, sid)
+
+
+async def place_direct(t, plan, option_id, confirm_token, take_way='', user_confirmation=''):
+    """Create the order(s) of a quoted plan with no confirmation page: the guards that stay are one order per quote, the three-way
+    outcome with convergence (service.place), and the per-quote ceiling (above it the person must type the exact amount)."""
+    from coupon_split import confirmation as cf
+    plan_id = plan['plan_id']
+    if plan['state'] != 'quoted':return service.load(plan_id, t)  # replay: read back, never a second order
+    import hmac
+    if not hmac.compare_digest(str(confirm_token), plan['confirm_token']):raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。')
+    if time.time() - plan['created'] > onto.QUOTE_SECONDS:raise ValueError(f'报价已过期（超过 {onto.QUOTE_SECONDS//60} 分钟），价格和优惠可能已变；重新报价。')
+    selected = next(p for p in plan['plans'] if p['option_id'] == option_id)
+    if selected['price'] > max_order_cents():
+        kind, cents = cf.classify(user_confirmation or '')
+        if kind != 'confirm' or cents != selected['price']:
+            raise ValueError(f"总价 ¥{selected['price']/100:.2f} 超过单次上限 ¥{max_order_cents()/100:.2f}：请用户回复「确认下单 ¥{selected['price']/100:.2f}」，把这句原话交给 place_orders 的 user_confirmation。")
+    selected = await prepare_place(t, plan, option_id, confirm_token, take_way)
+    plan = service.load(plan_id, t)
+    if plan['state'] != 'quoted':return plan
+    take = (plan.get('order_elements') or {}).get('takeWayCode', '')
+    from coupon_split import humanconfirm as hc
+    record = confirmations.create(owner(t), plan_id, option_id, take, selected['price'], hc.order_summary(plan, selected, take))
+    confirmations.transition(record['key'], 'placing', ('pending',))  # registered so a "不要了" that arrives while create-order is in flight finds it
+    try:
+        return await finish_place(t, plan_id, confirm_token, option_id, record['key'])
+    except Withdrawn:
+        raise ValueError('用户表示不下单，订单没有创建。')
+
+
+PLACE_DIRECT_DESCRIPTION = '建单：quote_best 返回还差堂食/外带（take_way）时，补上后建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。'
+
+
+@mcp.tool(description=None if HUMAN_AT_IMPORT else PLACE_DIRECT_DESCRIPTION,meta={"anthropic/requiresUserInteraction":True} if HUMAN_AT_IMPORT else {}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')] = '', option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
     """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；真实下单还需用户本人在确认弹窗（填入实付金额后接受）或本机确认页（点“确认下单”）再确认一次，任何宿主都一样、没有豁免，白名单确认句本身不足以下单；模拟模式只需白名单确认句。超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t); claim={}; amount_note=None
     from coupon_split import confirmation as cf
@@ -649,6 +731,9 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
     # Decision order, see coupon_split/confirmation.py. 1: withdrawal beats everything else.
     if cf.is_negative(user_confirmation):
         return await withdraw_by_words(t,plan,option_id)
+    if not human_confirm_enabled():
+        placed=await place_direct(t,plan,option_id,confirm_token,take_way,user_confirmation)
+        return direct_result(placed)
     if plan['state']=='quoted':
         # M03: a wrong credential or an expired quote is refused on the very first call, before any confirmation page exists.
         import hmac
@@ -717,11 +802,13 @@ async def pay_card(plan_id: str) -> CallToolResult:
     plan = await service.inspect_payment(token(),plan_id)
     for o in plan["orders"]:
         o["remaining_seconds"] = max(0,int(deadline(o["expirePayTime"])-time.time()))
+    if not human_confirm_enabled():return direct_result(plan)
     if plan.get('payment_key'):plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
     return result(public(plan),markdown(plan))
 
 
 async def attach_payment_url(plan):
+    if not human_confirm_enabled():return plan  # static pages: no page service involved
     if not plan.get('payment_key'):
         plan['payment_key']=secrets.token_urlsafe(32)
         service.save(plan)
@@ -733,7 +820,8 @@ async def attach_payment_url(plan):
 async def wait_payment(plan_id: str, timeout: Annotated[int, Field(ge=0,le=60)] = 60) -> CallToolResult:
     """只读等待付款，每轮最多60秒、每3秒查状态，不写本地或上游；临期撤回由后台巡检负责。模拟模式无需调用。"""
     plan=await service.wait_payment(token(),plan_id,timeout)
-    if plan.get('payment_key'):plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
+    if not human_confirm_enabled() and plan['state']=='awaiting_payment':return direct_result(plan)
+    if plan.get('payment_key') and human_confirm_enabled():plan['payment_url']=(await local_url())+'/payment/'+plan['payment_key']
     from coupon_split.payment import payment_message
     if plan['state'] in {'verifying','place_failed'}:
         from coupon_split.presentation import markdown as card
@@ -1939,6 +2027,26 @@ async def payment_page(request):
     plan=await service.inspect_payment(t,plan['plan_id'])
     from coupon_split.payment import payment_state
     return JSONResponse(payment_state(plan,request.headers.get('user-agent','')),headers=headers)
+
+
+def apply_direct_descriptions():
+    """Internal-tool mode: the tool descriptions the host reads carry no confirmation-page / amount-sentence narrative."""
+    tools = mcp._tool_manager._tools
+    w = tools['withdraw_order']
+    w.description = w.description.replace('确认页还没点就作废确认页，订单已建就撤回订单', '订单已建就撤回订单')
+    m = tools['mcd_start']
+    m.description = chr(10).join(line for line in m.description.split(chr(10)) if not line.startswith('报价后用户说的标准确认句'))
+    tools['place_orders'].parameters['properties']['user_confirmation']['description'] = '平时留空。总价超过单次上限（返回里有 over_limit）时，逐字复制用户回复的“确认下单 ¥金额”。'
+    for name in ('cancel_plan',):
+        tools[name].description = tools[name].description.replace('确认页', '')
+
+
+if not HUMAN_AT_IMPORT:
+    apply_direct_descriptions()
+else:  # human-confirmation mode: the sentence is required, as before r32
+    _required = mcp._tool_manager._tools['place_orders'].parameters.setdefault('required', [])
+    if 'user_confirmation' not in _required:
+        _required.insert(2, 'user_confirmation')
 
 
 app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}/withdraw',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}/withdraw',payment_page,methods=['POST']),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route("/locate/{session_id}",locate_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),*__import__('coupon_split.admin',fromlist=['routes']).routes(ROOT,preferences),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))

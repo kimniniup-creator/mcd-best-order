@@ -953,7 +953,7 @@
   },
   {
     "name": "quote_best",
-    "description": "向麦当劳核价，得到用户要看的价格和确认凭证，并在本地保存方案；不创建上游订单。用户看到报价之前不能确认下单；核价只是问价，不产生订单、不扣款，不用先征得用户同意。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。",
+    "description": "向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。总价超过单次上限、或还差堂食/外带时不建单，返回报价和缺的事实。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。",
     "inputSchema": {
       "$defs": {
         "OrderElements": {
@@ -1147,7 +1147,7 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false,
+      "destructiveHint": true,
       "idempotentHint": false,
       "openWorldHint": true
     }
@@ -1215,7 +1215,7 @@
   },
   {
     "name": "place_orders",
-    "description": "仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；真实下单还需用户本人在确认弹窗（填入实付金额后接受）或本机确认页（点“确认下单”）再确认一次，任何宿主都一样、没有豁免，白名单确认句本身不足以下单；模拟模式只需白名单确认句。超过200元须额外确认具体金额。确认凭证10分钟有效。",
+    "description": "建单：quote_best 返回还差堂食/外带（take_way）时，补上后建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。",
     "inputSchema": {
       "properties": {
         "plan_id": {
@@ -1227,7 +1227,8 @@
           "type": "string"
         },
         "user_confirmation": {
-          "description": "逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。只有这四种标准确认句才算确认：“确认下单”“确认”“同意下单”“就这样下单”（后面可带金额，如“确认下单 ¥10.00”，超过 ¥200 时必须带金额；金额必须是规范写法：可选一个货币符号 ¥ ￥ RMB CNY，整数加最多两位小数，可选一个单位元或块，不能有千分位逗号、多个符号或多个小数点，格式不对不算确认，改在确认页点确认下单；前面可带“好的”“好”“嗯嗯”“嗯”“对”“是的”“OK”“okay”，后面可带“谢谢你”“谢谢”“多谢”“谢了”“麻烦了”“辛苦了”“吧”），其余话一律不算确认，服务端只提示用户回复“确认下单”。用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。",
+          "default": "",
+          "description": "平时留空。总价超过单次上限（返回里有 over_limit）时，逐字复制用户回复的“确认下单 ¥金额”。",
           "title": "User Confirmation",
           "type": "string"
         },
@@ -1249,8 +1250,7 @@
       },
       "required": [
         "plan_id",
-        "confirm_token",
-        "user_confirmation"
+        "confirm_token"
       ],
       "title": "place_ordersArguments",
       "type": "object"
@@ -1261,9 +1261,7 @@
       "idempotentHint": true,
       "openWorldHint": true
     },
-    "_meta": {
-      "anthropic/requiresUserInteraction": true
-    }
+    "_meta": {}
   },
   {
     "name": "pay_card",
@@ -1320,7 +1318,7 @@
   },
   {
     "name": "withdraw_order",
-    "description": "撤回这单：确认页还没点就作废确认页，订单已建就撤回订单，已付款则说明无法在这里撤回。用户在任何时候表达不想要、取消、改天再说、不吃了、等一下、先别、我再想想这类不想继续的意思，就立刻调用，不用等特定词。返回结果如实转告用户。拿不准是不是想撤，可以先问“要撤回这单吗”。“不要香菜”“换大杯”这类只是改餐品，不是撤回。",
+    "description": "撤回这单：订单已建就撤回订单，已付款则说明无法在这里撤回。用户在任何时候表达不想要、取消、改天再说、不吃了、等一下、先别、我再想想这类不想继续的意思，就立刻调用，不用等特定词。返回结果如实转告用户。拿不准是不是想撤，可以先问“要撤回这单吗”。“不要香菜”“换大杯”这类只是改餐品，不是撤回。",
     "inputSchema": {
       "properties": {
         "plan_id": {
@@ -1627,7 +1625,7 @@
   },
   {
     "name": "mcd_start",
-    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）由 place_orders 处理，不属于本工具。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。\n",
+    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。\n",
     "inputSchema": {
       "properties": {
         "utterance": {

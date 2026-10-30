@@ -7,7 +7,7 @@
 2. 已装 uv 时运行下面命令，把 `<host>` 换为表中的名字。先预览；用户的“帮我安装”授权包含对应 MCP 注册，可核对路径后添加 `--apply`。没有安装授权时只预览。不要改模型、全局审批或其他 MCP。
 
    ```sh
-   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.8.4/coupon_split-0.8.4-py3-none-any.whl coupon-split setup --host <host>
+   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.0/coupon_split-0.9.0-py3-none-any.whl coupon-split setup --host <host>
    ```
 
 3. 默认使用文档支持的项目配置；只提供全局配置的宿主会显示实际目标。隔离环境用 `--project <workspace> --home <isolated-home>` 或 `--config <actual-config-path>`。保留已有条目；写入前安装器会保留原文件备份。不要把 Token 写到仓库或聊天。
@@ -17,3 +17,7 @@
 实际点餐遵守 MCP initialize instructions：它给出点餐本体概要和安全不变量，其余由你判断。你理解用户，服务端把你的理解落到麦当劳真实数据上并校验（`resolve_order`、`mcd_start`），每个返回带 `state` 和 `allowed_actions`；价格只来自 `quote_best`。报价后等用户下一条明确确认，再逐字传其最后一句给 `place_orders.user_confirmation`。超过 ¥200 要求用户回复完整确认句。付款卡和付款页链接要发给用户，再用 `wait_payment` 等结果；模拟模式无有效支付链接，不等真实付款。**真实下单在所有宿主（包括 Claude Code、Codex）上都需要用户本人再确认一次，没有按宿主名称放行的豁免**：`place_orders` 会弹出确认弹窗（用户勾选并填入实付金额后接受），或返回确认页链接：原样发给用户，再用同样参数重新调用并等待用户在浏览器点“确认下单”，绝不自己点或伪造；用户点完订单立即创建，不再等用户回来说话。白名单确认句只是前置条件，本身不足以真实下单。模拟模式（`COUPON_SPLIT_SIMULATE=true`）只需白名单确认句。<!--confirm-rule-->只有这四种标准确认句才算确认：“确认下单”“确认”“同意下单”“就这样下单”（后面可带金额，如“确认下单 ¥10.00”，超过 ¥200 时必须带金额；金额必须是规范写法：可选一个货币符号 ¥ ￥ RMB CNY，整数加最多两位小数，可选一个单位元或块，不能有千分位逗号、多个符号或多个小数点，格式不对不算确认，改在确认页点确认下单；前面可带“好的”“好”“嗯嗯”“嗯”“对”“是的”“OK”“okay”，后面可带“谢谢你”“谢谢”“多谢”“谢了”“麻烦了”“辛苦了”“吧”），其余话一律不算确认，服务端只提示用户回复“确认下单”。<!--/confirm-rule-->**撤回由 Agent 判断**：用户任何时候表达不想要、取消、改天、不吃了、等一下、先别、我再想想等不想继续的意思，Agent 立刻调用 `withdraw_order(plan_id)`（或 `cancel_plan`），并如实转告结果；拿不准先问“要撤回这单吗”。“不要香菜”“换成大杯可乐”“等一下我看看菜单”这类只是改餐品，不是撤回。确认页和付款页都有“撤回这单”按钮，点一下即撤回，不经任何语言判断。服务端另有一道兜底：`place_orders` 收到 取消、撤回、撤单、撤销、撤订、退单、退订、不要了、不要这单、别下单、不下了、不点了、不买了、算了、cancel、stop（及繁体、同音错别字）时，确认页作废或订单撤回；“不要”“等等”“稍等”“改一下”“换一下”“先别”这类弱词不触发兜底。用户须知：回复“确认下单”才会下单；不想要了随时撤回。之后才会建真实待付款单，首次使用必须向用户说明。工具结果末尾的结构化 JSON 块是给程序读的，不用展示给用户。
 
 开发本仓库时：不读取或提交个人凭据，不真实下单。运行 `pytest`；配置变更须验证预览不写、先备份、保留其他条目和对称卸载。不要把上面的安装自检当成真实付款验收。
+
+## 0.9.0 内部工具模式
+
+默认不再要人工确认：说想吃什么，`quote_best` 算最低价并直接建单，回复只给总价和每单付款链接，付款即确认；付款页是写在本机状态目录的静态 HTML。`COUPON_SPLIT_HUMAN_CONFIRM=true` 恢复确认页和上面的确认规则，`COUPON_SPLIT_MAX_ORDER_YUAN` 调整单次总额上限（默认 300 元）。

@@ -235,3 +235,23 @@ def elicitation_message(summary):
     mode = '' if summary['real'] else '（模拟模式，不会产生真实订单）'
     return (f"确认下单吗？{summary['store']} · {summary['way']}\n{items}\n实付 ¥{summary['price_yuan']}，{summary['payments_note']}{mode}。\n"
             '接受后会在麦当劳创建待付款订单，付款仍由你本人在手机上完成。')
+
+
+# ---- r32: internal-tool mode. The confirmation page / dialog / amount sentence are OFF by default; paying is the confirmation.
+# The code above stays; COUPON_SPLIT_HUMAN_CONFIRM=true brings the gate back. Read at call time so a test or a restart can flip it.
+def human_confirm_enabled():
+    import os
+    return os.environ.get('COUPON_SPLIT_HUMAN_CONFIRM', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+DEFAULT_MAX_ORDER_YUAN = 300
+
+
+def max_order_cents():
+    """Ceiling for one quote's total (all split orders together); above it the person must confirm the exact amount in words."""
+    import os
+    try:
+        yuan = float(os.environ.get('COUPON_SPLIT_MAX_ORDER_YUAN', DEFAULT_MAX_ORDER_YUAN))
+    except ValueError:
+        yuan = DEFAULT_MAX_ORDER_YUAN
+    return int(round(yuan * 100))

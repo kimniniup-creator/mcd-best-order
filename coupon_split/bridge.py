@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import socket
 import subprocess
 import sys
@@ -44,6 +45,90 @@ def process_alive(pid):
     except OSError:return False
 
 
+def powershell():return str(Path(os.environ.get('SystemRoot',r'C:\Windows'))/'System32'/'WindowsPowerShell'/'v1.0'/'powershell.exe')
+
+
+WMI_CREATE=r"""
+$ErrorActionPreference='Stop'
+$startup=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}
+$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$env:COUPON_SPLIT_WMI_COMMAND;CurrentDirectory=$env:COUPON_SPLIT_WMI_CWD;ProcessStartupInformation=$startup}
+[Console]::Out.Write(([string]$r.ReturnValue)+' '+([string]$r.ProcessId))
+"""
+
+
+def spawn_via_wmi(command,env,root):
+    """Windows: start the page service from the WMI provider instead of from this process.
+
+    Hosts such as Codex put the MCP server's whole process tree into a Job Object that kills its members when
+    the round ends and does not allow breakaway (measured, see qa/r31-fixlist.md). A process created by
+    Win32_Process.Create is a child of the WMI service, so it is in none of those jobs. WMI cannot hand over an
+    environment, so a one-shot relay (relay_main) fetches command and environment from this
+    process over a loopback socket guarded by a random nonce, then starts the real page service with them.
+    Returns True when the relay was started and given its work."""
+    server=socket.socket();server.bind(('127.0.0.1',0));server.listen(1);server.settimeout(25)
+    nonce=secrets.token_hex(16)
+    exe=Path(sys.executable);windowless=exe.with_name('pythonw.exe')
+    package_parent=str(Path(__file__).resolve().parents[1])  # the relay starts with none of this process's PYTHONPATH
+    boot='import sys;sys.path.insert(0,%r);from coupon_split.bridge import relay_main;relay_main(%r,%r)'%(package_parent,str(server.getsockname()[1]),nonce)
+    relay=[str(windowless if windowless.exists() else exe),'-c',boot]
+    try:
+        ran=subprocess.run([powershell(),'-NoProfile','-NonInteractive','-Command',WMI_CREATE],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=40,
+                           env=dict(os.environ,COUPON_SPLIT_WMI_COMMAND=subprocess.list2cmdline(relay),COUPON_SPLIT_WMI_CWD=os.getcwd()),creationflags=subprocess.CREATE_NO_WINDOW)
+        if ran.returncode!=0 or ran.stdout.strip().split(' ')[0]!='0':return False
+        deadline=time.monotonic()+25
+        while True:  # another local process may connect first; only the holder of the nonce gets the environment
+            server.settimeout(max(.1,deadline-time.monotonic()))
+            conn,_=server.accept()
+            with conn:
+                conn.settimeout(5)
+                try:heard=conn.makefile('rb').readline().strip().decode('ascii','replace')
+                except OSError:continue
+                if not secrets.compare_digest(heard.encode('utf-8'),nonce.encode('ascii')):continue
+                conn.sendall(json.dumps({'command':command,'env':dict(env,COUPON_SPLIT_BRIDGE_LAUNCH='wmi'),'cwd':os.getcwd()}).encode('utf-8'))
+                conn.shutdown(socket.SHUT_WR)
+            break
+        return True
+    except (OSError,subprocess.SubprocessError,ValueError):return False
+    finally:server.close()
+
+
+def relay_main(port,nonce):
+    """Runs outside the host's job: take the command and environment from the owner, start the page service, leave."""
+    with socket.create_connection(('127.0.0.1',int(port)),timeout=10) as conn:
+        conn.sendall(nonce.encode('ascii')+b'\n')
+        raw=b''
+        while True:
+            chunk=conn.recv(65536)
+            if not chunk:break
+            raw+=chunk
+    work=json.loads(raw.decode('utf-8'))
+    home=work['env'].get('COUPON_SPLIT_HOME')
+    log=open(Path(home)/'bridge.stderr','ab') if home else subprocess.DEVNULL
+    subprocess.Popen(work['command'],env=work['env'],cwd=work.get('cwd') or None,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,
+                     creationflags=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
+POSIX_RELAUNCH="import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=open(sys.argv[2],'ab'),start_new_session=True,close_fds=True)"
+
+
+def spawn_detached(command,env,log,root):
+    """Start the page service so that it outlives the host's round: it must not share fate with the process that issues the link."""
+    if os.name!='nt':
+        # macOS / Linux: leave the host's process group and controlling terminal (new session) and also stop being a
+        # child of this process: a host that walks the MCP process's children before it kills it (or signals its
+        # group, or hangs up the terminal) then finds nothing to take. The page service is started by a short-lived
+        # intermediate that exits at once, so the service is re-parented to init.
+        env=dict(env,COUPON_SPLIT_BRIDGE_LAUNCH='session')
+        subprocess.run([sys.executable,'-c',POSIX_RELAUNCH,json.dumps(command),str(Path(root)/'bridge.stderr')],env=env,stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL,stderr=log,start_new_session=True,close_fds=True,timeout=30)
+        return None
+    if spawn_via_wmi(command,env,root):return None
+    # No WMI (disabled, or no PowerShell): fall back to leaving the immediate job (works for hosts whose job allows breakaway).
+    base=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_NEW_PROCESS_GROUP
+    try:return subprocess.Popen(command,env=dict(env,COUPON_SPLIT_BRIDGE_LAUNCH='breakaway'),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=base|subprocess.CREATE_BREAKAWAY_FROM_JOB)
+    except OSError:return subprocess.Popen(command,env=dict(env,COUPON_SPLIT_BRIDGE_LAUNCH='plain'),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=base)  # job forbids breakaway
+
+
 def ensure_bridge(root):
     root=Path(root);info=root/'bridge.json';lock=root/'bridge.lock'
     leases=root/'bridge-leases';leases.mkdir(exist_ok=True)
@@ -71,15 +156,8 @@ def ensure_bridge(root):
             env=dict(os.environ,COUPON_SPLIT_HOME=str(root),COUPON_SPLIT_STDIO='1',COUPON_SPLIT_BRIDGE_INSTANCE=instance,PYTHONUTF8='1')
             command=[sys.executable,'-m','coupon_split.bridge','--home',str(root),'--instance',instance]
             with (root/'bridge.stderr').open('ab') as log:
-                # The page service must not die with the MCP process: leave the host's process group / job
-                # (a host that kills its child's tree on exit would take the confirmation page with it).
-                if os.name=='nt':
-                    base=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_NEW_PROCESS_GROUP
-                    try:child=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=base|subprocess.CREATE_BREAKAWAY_FROM_JOB)
-                    except OSError:child=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,creationflags=base)  # job forbids breakaway
-                else:
-                    child=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=log,start_new_session=True)
-            _children[str(root)]=child
+                child=spawn_detached(command,env,log,root)
+            if child is not None:_children[str(root)]=child
             for _ in range(1200):
                 if child is not None and child.poll() is not None:raise RuntimeError('点餐页服务启动失败，请重试')
                 if info.exists():
@@ -100,7 +178,7 @@ async def run():
     service=uvicorn.Server(uvicorn.Config(s.app,log_level='error',access_log=False))
     task=asyncio.create_task(service.serve(sockets=[sock]))
     while not service.started:await asyncio.sleep(.01)
-    value={'url':f'http://127.0.0.1:{port}','pid':os.getpid(),'instance':os.environ.get('COUPON_SPLIT_BRIDGE_INSTANCE',''),'expires':time.time()+24*60*60}
+    value={'url':f'http://127.0.0.1:{port}','pid':os.getpid(),'instance':os.environ.get('COUPON_SPLIT_BRIDGE_INSTANCE',''),'expires':time.time()+24*60*60,'launch':os.environ.get('COUPON_SPLIT_BRIDGE_LAUNCH','')}
     target=root/'bridge.json';temp=root/'bridge.tmp'
     temp.write_text(json.dumps(value),encoding='utf-8');os.replace(temp,target)
     async def expire():

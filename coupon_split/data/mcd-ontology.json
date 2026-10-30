@@ -34,7 +34,7 @@
       "TimeWindow": {"label": "时间窗", "kinds": {"immediate": "现在就取/送", "reserve": "预约到某天某时"}, "source": "门店返回的 reservationTimeOptions 与营业时段"},
       "Item": {"label": "商品", "grounding": "词面经 concepts 落到门店实时菜单；价格与商品码只来自菜单"},
       "ComboSlot": {"label": "套餐选配槽", "rule": "每个选配槽有官方候选与数量范围；用户没说的槽用官方默认项并告诉用户"},
-      "Spec": {"label": "规格", "axes": {"size": ["超大杯", "特大杯", "加大杯", "大杯", "中杯", "小杯", "超大份", "特大份", "加大份", "大份", "中份", "小份"], "temperature": ["热", "冰", "去冰", "少冰", "多冰", "常温"], "flavor": []}, "rule": "规格严格等价：只接受官方选项里有的规格；没有就说明并列出官方候选，不换成相近的"},
+      "Spec": {"label": "规格", "axes": {"size": ["超大杯", "特大杯", "加大杯", "大杯", "中杯", "小杯", "超大份", "特大份", "加大份", "大份", "中份", "小份"], "temperature": ["热", "冰", "去冰", "少冰", "多冰", "常温"], "flavor": []}, "synonyms": {"去冰": ["不要冰块", "不要冰", "不加冰块", "不加冰", "不放冰块", "不放冰", "不用冰块", "不用冰", "别放冰", "别加冰", "无冰", "走冰"]}, "rule": "规格严格等价：只接受官方选项里有的规格；没有就说明并列出官方候选，不换成相近的"},
       "Alias": {"label": "黑话别名", "ref": "concepts"}
     },
     "slots": {
@@ -77,16 +77,16 @@
       "collecting": {"about": "已有会话，缺门店或缺餐品", "actions": ["resolve_order", "mcd_start", "find_store", "delivery_addresses", "get_location", "get_menu", "account_info"]},
       "store_ready": {"about": "门店已定、餐品未定", "actions": ["resolve_order", "get_menu", "get_item_detail", "propose_cart", "mcd_start", "get_cart"]},
       "picking": {"about": "点餐页已生成，等用户在页面里选好并提交", "replyRequires": ["picker_url"], "actions": ["get_cart", "resolve_order", "mcd_start", "get_menu"]},
-      "items_ready": {"about": "餐品已定、尚未报价（用户还没有看到价格，报价之前不能确认下单；核价只向麦当劳问价，不产生订单、不扣款）", "actions": ["quote_best", "preview_selection", "get_item_detail", "resolve_order", "get_menu", "mcd_start"]},
+      "items_ready": {"about": "餐品已定、尚未报价（用户还没有看到价格）；下一步 quote_best", "actions": ["quote_best", "preview_selection", "get_item_detail", "resolve_order", "get_menu", "mcd_start"]},
       "proposed": {"about": "已给出主推和备选，等用户认可", "actions": ["mcd_start", "propose_cart", "get_menu", "get_item_detail", "resolve_order"]},
       "blocked": {"about": "有未解决的约束违反，先解决才能报价", "actions": ["resolve_order", "mcd_start", "find_store", "delivery_addresses", "get_menu"]},
-      "quoted": {"about": "已报价，等用户确认", "replyRequires": ["pay_yuan"], "actions": ["place_orders", "withdraw_order", "cancel_plan", "get_options", "get_evidence", "quote_best", "resolve_order"],
+      "quoted": {"about": "已报价，还没建单（人工确认模式下等用户确认；内部工具模式下是总价超限或还差堂食/外带）", "replyRequires": ["pay_yuan"], "actions": ["place_orders", "withdraw_order", "cancel_plan", "get_options", "get_evidence", "quote_best", "resolve_order"],
         "preconditions": {"place_orders": "用户本轮最后一句是标准确认句，且带上报价的 plan_id 和 confirm_token"}},
       "confirm_required": {"about": "确认页已生成，等用户在页面或弹窗里确认", "replyRequires": ["confirm_url"], "actions": ["place_orders", "withdraw_order"]},
       "placing": {"about": "正在创建订单", "actions": ["wait_payment", "withdraw_order"]},
       "verifying": {"about": "正在核对下单结果", "actions": ["wait_payment", "withdraw_order"]},
       "rollback_pending": {"about": "撤回尚未成功，系统在重试", "actions": ["wait_payment", "withdraw_order"]},
-      "awaiting_payment": {"about": "订单已建，等用户本人付款", "replyRequires": ["payment_url"], "actions": ["pay_card", "wait_payment", "withdraw_order"]},
+      "awaiting_payment": {"about": "订单已建，等用户本人付款", "replyRequires": ["payment_url", "payment_links"], "actions": ["pay_card", "wait_payment", "withdraw_order"]},
       "cancelled": {"about": "已撤回或放弃", "terminal": true, "actions": ["mcd_start", "resolve_order"]},
       "paid": {"about": "已付款", "terminal": true, "actions": ["mcd_start", "resolve_order"]},
       "place_failed": {"about": "下单没有成功", "terminal": true, "actions": ["mcd_start", "resolve_order", "withdraw_order"]},
@@ -96,6 +96,16 @@
       "expired": {"about": "已过期", "terminal": true, "actions": ["mcd_start", "resolve_order"]}
     },
     "replyRequiresAbout": "这些字段的内容用户必须在你的回复里看到：用户看不到工具返回，只看得到你发的消息；服务端无法看到你的回复，也不代为转达",
+    "reply_format": {
+      "about": "给用户的回复的格式约束（不是预填文案：服务端不替 Agent 写句子，只给事实字段和这些规则）。默认的内部工具模式下，用户说想吃什么，只想要价格和付款入口。",
+      "ask": "问问题时只问一个问题，一句话，不解释原因，可给选项，如“外送还是自取？”“送哪个地址：A / B”“堂食还是外带？”。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；自取才问城市和地标。",
+      "after_order": "下单后每单一行“¥金额 付款链接”（链接取 payment_links[].url，电脑扫码用 payment_links[].file）；拆成多单时第一行写总价 total_yuan。不解释为什么拆单，不罗列优惠明细，不重复餐品，不讲流程；用户追问时再说。",
+      "never": ["优惠原因", "拆单理由", "流程说明", "门店、地址、餐品的复述", "付款截止时间和不付款的后果（付款页上有）", "确认或授权的叙述（付款本身就是确认）"]
+    },
+    "order_mode": {
+      "about": "COUPON_SPLIT_HUMAN_CONFIRM 默认 false：报价后直接建单，付款即确认，不再要确认页、弹窗、金额句。保留的防线：同一报价只建一次、建单结果三分类与收敛、单次总额上限（COUPON_SPLIT_MAX_ORDER_YUAN，默认 300 元，超过须用户回复“确认下单 ¥金额”）。设为 true 恢复人工确认。",
+      "max_order_yuan_default": 300
+    },
     "validity": {
       "about": "确认页链接和报价的有效期（秒，自发出时算起）。链接发出后，即使发起它的对话进程已退出，页面服务仍保持到有效期结束，以及仍有待付款订单需要核验或撤回的期间；有效期内可确认、建单、看付款页、撤回，过期后只显示事实（页面服务在过期后再留 expired_page_seconds 秒，让过期链接显示说明而不是打不开），不再建单",
       "confirmation_seconds": 900,
