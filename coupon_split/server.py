@@ -22,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from coupon_split.optimizer import DEFAULT_CART, atom, validate_quantities
-from coupon_split.elements import OrderElements, normalize_elements, merge_elements, utterance_elements, without_derived, DERIVED
+from coupon_split.elements import OrderElements, normalize_elements, merge_elements, utterance_elements, without_derived, DERIVED, resolve_take_way
 from coupon_split.menu import menu_rows, matches, intent_text, resolve_intent, default_item, recommend_rows, AmbiguousIntent
 from coupon_split.presentation import markdown, public, money, distance, quote_summary, option_difference
 from coupon_split.service import Service, owner, deadline, Withdrawn
@@ -402,7 +402,7 @@ async def get_item_detail(store_code: str, product_code: str, elements: OrderEle
     return result({'detail':detail,'default_item':default_item(detail)},detail.get('name',product_code)+'：可以按官方默认规格，也可以更换下面的选项。')
 
 
-QUOTE_DIRECT_DESCRIPTION = '向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。总价超过单次上限、或还差堂食/外带时不建单，返回报价和缺的事实。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。'
+QUOTE_DIRECT_DESCRIPTION = '向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。总价超过单次上限、或得来速还差堂食/外带时不建单，返回报价和缺的事实；到店自取默认外带，不用问。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。'
 
 
 @mcp.tool(description=None if HUMAN_AT_IMPORT else QUOTE_DIRECT_DESCRIPTION,annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=not HUMAN_AT_IMPORT,idempotentHint=False,openWorldHint=True))
@@ -481,9 +481,17 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
     plan = await service.quote(t,store_code,items,allow_combos,context)
     take=elements.get("takeWayCode")
     take_options=plan['plans'][0]['orders'][0]['takeWayList']
+    if context["beType"]!=2:
+        # What the host or user said (堂食/外带/any official code) maps onto the code this store's quote really offers; a pickup
+        # order whose user did not say 堂食 is 外带 by default, so that is never asked.
+        if take:take=resolve_take_way(take,take_options) or take
+        elif elements.get('fulfillment')=='pickup':
+            take=resolve_take_way('外带',take_options)
+            if take:elements.setdefault('sources',{})['takeWayCode']='default'
+        if take:elements['takeWayCode']=take
     if take:
         selected=next((r for r in take_options if take==r.get('code',r.get('takeWayCode'))),{})
-        elements['takeWayName']=selected.get('name') or selected.get('takeWayName') or selected.get('title') or {'eat-in':'堂食','take-in-store':'外带'}.get(take,'所选取餐方式')
+        elements['takeWayName']=selected.get('name') or selected.get('takeWayName') or selected.get('title') or {'eat-in':'堂食','take-in-store':'外带','locker-in':'外带'}.get(take,'所选取餐方式')
     if take and context["beType"] != 2 and any(take not in {r.get("code",r.get("takeWayCode")) for r in o["takeWayList"]} for p in plan["plans"] for o in p["orders"]):
         raise ValueError("堂食/外带方式必须是本次计价返回的选项之一")
     pending=['takeWayCode'] if context['beType']!=2 and not take else []
@@ -548,7 +556,8 @@ async def prepare_place(t, plan, option_id, confirm_token, take_way=''):
     if take_way:
         import hmac
         if not hmac.compare_digest(confirm_token,plan['confirm_token']):raise ValueError('确认凭证不匹配')
-        if any(take_way not in {v.get('code',v.get('takeWayCode')) for v in o['takeWayList']} for o in selected['orders']):raise ValueError('堂食/外带方式必须是本次官方返回的选项之一')
+        take_way=resolve_take_way(take_way,selected['orders'][0]['takeWayList']) or take_way
+        if any(take_way not in {v.get('code',v.get('takeWayCode')) for v in o['takeWayList']} for o in selected['orders']):raise ValueError('堂食/外带方式必须是本次官方返回的选项之一：'+'、'.join(str(v.get('code',v.get('takeWayCode')))+' '+str(v.get('title',v.get('name',''))) for v in selected['orders'][0]['takeWayList']))
         plan['order_elements']['takeWayCode']=take_way
         plan['order_elements']['sources']['takeWayCode']='utterance'
         plan.update(elements_pending=[],elements_validated=True);service.save(plan)
@@ -719,11 +728,11 @@ async def place_direct(t, plan, option_id, confirm_token, take_way='', user_conf
         raise ValueError('用户表示不下单，订单没有创建。')
 
 
-PLACE_DIRECT_DESCRIPTION = '建单：quote_best 返回还差堂食/外带（take_way）时，补上后建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。'
+PLACE_DIRECT_DESCRIPTION = '建单：得来速时 quote_best 返回还差堂食/外带，用户答了之后，把“堂食”或“外带”传给 take_way（服务端对上本店官方代码，不用你查代码）再建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。'
 
 
 @mcp.tool(description=None if HUMAN_AT_IMPORT else PLACE_DIRECT_DESCRIPTION,meta={"anthropic/requiresUserInteraction":True} if HUMAN_AT_IMPORT else {}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
-async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')] = '', option_id: str = "0", take_way: str = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
+async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Annotated[str, Field(description='逐字复制本轮最后一条用户消息；严禁 Agent 代造、拼接或补写金额。有金额须匹配报价；超过¥200须完整原文“确认下单 ¥金额”（两位小数）。'+confirm_rule_text()+'用户想撤回时请直接调用 withdraw_order，不要靠这个参数；若这里收到取消、撤回、不要了、别下单等明确的词，服务端也会作废确认或撤回，仅作保险。')] = '', option_id: str = "0", take_way: Annotated[str, Field(description="用户原话里的“堂食”或“外带”（传这两个词之一）；服务端按本店报价对上官方代码，外带在有的门店是 take-in-store、有的是 locker-in 取餐柜，不用你查。到店自取不用传（默认外带）。")] = "", high_amount_confirmation: str = "", ctx: Context | None = None) -> CallToolResult:
     """仅逐字收到用户明确确认后调用（宿主有审批时须通过）。默认真实下单；真实下单还需用户本人在确认弹窗（填入实付金额后接受）或本机确认页（点“确认下单”）再确认一次，任何宿主都一样、没有豁免，白名单确认句本身不足以下单；模拟模式只需白名单确认句。超过200元须额外确认具体金额。确认凭证10分钟有效。"""
     t=token(); plan=service.load(plan_id,t); claim={}; amount_note=None
     from coupon_split import confirmation as cf

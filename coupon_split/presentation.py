@@ -172,7 +172,7 @@ def element_rows(plan):
     if delivery:result.append(row('addressId','送到',e.get('delivery_address','所选地址')+'，'+plan.get('storeName','所选门店')+'配送'+(' · '+plan['distance'] if plan.get('distance') else '')))
     else:result.append(row('store_code','门店',plan.get('storeName','所选门店')))
     result.append(row('reservationDate','时间',human_time(e.get('reservationDate'),delivery)))
-    if not delivery:result.append(row('takeWayCode','取餐方式' if e.get('fulfillment')=='drive' else '堂食/外带',e.get('takeWayName') or {'eat-in':'堂食','take-in-store':'外带'}.get(e.get('takeWayCode'),'（待选）')))
+    if not delivery:result.append(row('takeWayCode','取餐方式' if e.get('fulfillment')=='drive' else '堂食/外带',e.get('takeWayName') or {'eat-in':'堂食','take-in-store':'外带','locker-in':'外带','堂食':'堂食','外带':'外带'}.get(e.get('takeWayCode'),'（待选）')))
     result += [row('needTableware','餐具','需要' if e.get('needTableware') else '不要'),row('account_name','账户',e.get('account_name','待核实')+' · 尾号 '+e.get('account_last4','待核实'))]
     return result
 

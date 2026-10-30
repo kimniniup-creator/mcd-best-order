@@ -50,7 +50,7 @@
       "people": {"entity": "Item", "values": "1 到 12", "sources": ["user_utterance"], "ask": "帮我配且没说人数时可以问", "default": "1"},
       "avoid": {"entity": "Item", "values": "忌口列表", "sources": ["user_utterance"], "ask": "不问", "default": "无"},
       "tableware": {"entity": "Item", "values": [true, false], "sources": ["user_utterance", "default"], "ask": "不问", "default": "false（不需要餐具）"},
-      "takeWay": {"entity": "Fulfillment", "values": "报价返回的堂食或外带", "sources": ["user_utterance", "lookup"], "ask": "得来速和自取报价后用户没说堂食或外带时必须问", "default": "无"}
+      "takeWay": {"entity": "Fulfillment", "values": "报价 takeWayList 里的选项。堂食的代码是 eat-in；外带的代码因门店而异：take-in-store，或 locker-in（title 仍是“外带”，副标题“店内取餐柜”）。给 take_way 传用户原话里的“堂食”或“外带”，服务端按本店报价对上官方代码", "sources": ["user_utterance", "default", "lookup"], "ask": "只有得来速报价后用户没说堂食或外带时才问；到店自取不问", "default": "到店自取 → 外带；用户自己说“堂食”才用堂食。得来速无默认"}
     },
     "constraints": {
       "STORE_NOT_FOUND": {"slot": "store", "fact": "按「{landmark}」在{city}没有查到可用门店。", "alternative": "换一个更具体的地标或小区"},
@@ -98,9 +98,10 @@
     "replyRequiresAbout": "这些字段的内容用户必须在你的回复里看到：用户看不到工具返回，只看得到你发的消息；服务端无法看到你的回复，也不代为转达",
     "reply_format": {
       "about": "给用户的回复的格式约束（不是预填文案：服务端不替 Agent 写句子，只给事实字段和这些规则）。默认的内部工具模式下，用户说想吃什么，只想要价格和付款入口。",
-      "ask": "问问题时只问一个问题，一句话，不解释原因，可给选项，如“外送还是自取？”“送哪个地址：A / B”“堂食还是外带？”。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；自取才问城市和地标。",
+      "ask": "问问题时只问一个问题，一句话，不解释原因，可给选项，如“外送还是自取？”“送哪个地址：A / B”。到店自取不问堂食还是外带（默认外带，用户自己说堂食才用堂食）。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；自取才问城市和地标。",
       "after_order": "下单后每单一行“¥金额 付款链接”（链接取 payment_links[].url，电脑扫码用 payment_links[].file）；拆成多单时第一行写总价 total_yuan。不解释为什么拆单，不罗列优惠明细，不重复餐品，不讲流程；用户追问时再说。",
-      "never": ["优惠原因", "拆单理由", "流程说明", "门店、地址、餐品的复述", "付款截止时间和不付款的后果（付款页上有）", "确认或授权的叙述（付款本身就是确认）"]
+      "no_narration": "调用工具前后不输出过程说明；用户能看到的只有问题本身，或者最终的金额加付款链接。",
+      "never": ["过程说明（我会查…、正在获取…、官方代码是…我用这个重新建单）", "优惠原因", "拆单理由", "流程说明", "门店、地址、餐品的复述", "付款截止时间和不付款的后果（付款页上有）", "确认或授权的叙述（付款本身就是确认）"]
     },
     "order_mode": {
       "about": "COUPON_SPLIT_HUMAN_CONFIRM 默认 false：报价后直接建单，付款即确认，不再要确认页、弹窗、金额句。保留的防线：同一报价只建一次、建单结果三分类与收敛、单次总额上限（COUPON_SPLIT_MAX_ORDER_YUAN，默认 300 元，超过须用户回复“确认下单 ¥金额”）。设为 true 恢复人工确认。",

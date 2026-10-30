@@ -47,7 +47,7 @@ class Interpretation(BaseModel):
     avoid: list[str] | None = Field(default=None, description='忌口')
     plan: Literal['帮我配', '我自己点', '照上次那份'] | None = Field(default=None, description='用户要你配餐、自己在点餐页点，还是照上次')
     tableware: bool | None = Field(default=None, description='是否要餐具')
-    take_way: Literal['eat-in', 'take-in-store'] | None = Field(default=None, description='堂食 eat-in 或外带 take-in-store')
+    take_way: str | None = Field(default=None, description='用户原话里的“堂食”或“外带”，传这两个词之一；用户没说就不填（到店自取默认外带，由服务端按本店报价对上官方代码，不用你查代码）')
 
 
 def fulfillment_said(text):

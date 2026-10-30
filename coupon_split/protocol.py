@@ -31,10 +31,11 @@ from coupon_split.ontology import MODEL  # noqa: E402
 from coupon_split.humanconfirm import human_confirm_enabled  # noqa: E402
 
 _FORMAT = MODEL['reply_format']
-DIRECT_INSTRUCTIONS = '''麦当劳点餐（内部工具）。你（宿主 Agent）理解用户；服务端把你的理解落到麦当劳的真实数据上，算出最低价方案并直接建单。用户只想要价格和付款入口。
+DIRECT_INSTRUCTIONS = '''麦当劳点餐（内部工具）。你（宿主 Agent）理解用户；服务端把你的理解落到麦当劳的真实数据上，算出最低价方案并直接建单。用户只想要价格和付款入口。调用工具前后不输出过程说明；用户能看到的只有问题本身，或者最终的金额加付款链接。
 
 本体概要
 - 取餐方式：到店自取 pickup、得来速 drive、麦乐送外送 delivery。自取和得来速按城市加地标查门店；外送只能用账户里已保存的地址，门店由地址决定。
+- 堂食/外带：到店自取默认外带，不问；用户自己说“堂食”才用堂食。得来速用户没说才问。传给 take_way 的是用户原话里的“堂食”或“外带”，服务端按本店报价对上官方代码（堂食 eat-in；外带因门店是 take-in-store 或 locker-in 取餐柜，不要自己猜代码）。
 - 时间：立即，或预约到某天某时。可选时段由门店决定，以门店返回的为准。
 - 餐品：用户的词（含黑话）落到该门店实时菜单。套餐有选配槽，用户没说的用官方默认。规格严格等价：官方没有的规格不换成相近的。
 - 每个槽位的值域、来源（用户原话、已保存数据、默认）、什么时候必须问用户、什么时候可以默认，都在 resolve_order 的返回里：resolved、ambiguous、missing、violations。用户没说、也不能默认的，问用户；不替用户选。
@@ -43,13 +44,14 @@ DIRECT_INSTRUCTIONS = '''麦当劳点餐（内部工具）。你（宿主 Agent�
 路径
 1. 用户说想吃什么：mcd_start 或 resolve_order 落地。缺信息时只问一个短问题。
 2. state 是 items_ready：调用 quote_best。它算出最低价方案（可以拆成多单），并直接建单；返回里的 payment_links 就是付款入口。付款本身就是确认：不付款的单由麦当劳超时自动取消。
-3. 取餐方式还差堂食/外带时，quote_best 返回报价和 take_options，问用户一句，再用 place_orders(plan_id, confirm_token, take_way=...) 建单。
+3. 只有得来速还差堂食/外带时，quote_best 才返回报价和 take_options：问用户一句，再用 place_orders(plan_id, confirm_token, take_way=“堂食”或“外带”) 建单。
 4. 用户表达不要了、取消、不吃了、等一下，立刻 withdraw_order 并如实说结果（撤回随时可用）。“不要香菜”“换成大杯可乐”只是改餐品。
 5. 总价超过单次上限（返回里有 over_limit）时不建单：把金额告诉用户，用户回复“确认下单 ¥金额”后，把这句原话逐字交给 place_orders(user_confirmation=...)。
 
 回复格式（约束，不是文案）
 - ''' + _FORMAT['ask'] + '''
 - ''' + _FORMAT['after_order'] + '''
+- ''' + _FORMAT['no_narration'] + '''
 - 不写：''' + '、'.join(_FORMAT['never']) + '''。
 - 价格、优惠、拆单只来自 quote_best，不自行编价或承诺最低。外送地址只能是账户已保存的地址，不创建。
 - 用户看不到工具返回：reply_must_show_user 里的内容（付款链接、金额、授权页）必须出现在你的回复里。

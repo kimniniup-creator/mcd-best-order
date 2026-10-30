@@ -10,7 +10,7 @@ class OrderElements(BaseModel):
     account_last4: str | None = None
     addressId: str | None = None
     delivery_address: str | None = None
-    takeWayCode: str | None = None
+    takeWayCode: str | None = Field(default=None, description='堂食或外带：传“堂食”或“外带”（服务端按本店报价对上官方代码）；到店自取不传，默认外带')
     takeWayName: str | None = None
     reservationDate: str | None = Field(default=None, validation_alias=AliasChoices('reservationDate', 'reservation_time', 'reservationTime'))
     needTableware: StrictBool | None = None
@@ -60,6 +60,35 @@ def utterance_elements(text):
     elif re.search(r'要餐具|需要餐具|带餐具', text):value['needTableware'] = True
     value['sources'] = {key:'utterance' for key in value}
     return value
+
+
+DINE_IN_CODES = {'eat-in'}
+TAKE_OUT_CODES = {'take-in-store', 'locker-in'}
+
+
+def _take_way_kind(code, title=''):
+    """'dine' for 堂食, 'out' for 外带 (whatever code the store uses for it), else None."""
+    code, title = str(code or '').strip().lower(), str(title or '')
+    if code in DINE_IN_CODES or '堂食' in title or '堂食' in code:return 'dine'
+    if code in TAKE_OUT_CODES or '外带' in title or '外带' in code or code in {'take-out', 'takeout', 'take-away', 'takeaway', '取餐柜'}:return 'out'
+    return None
+
+
+def resolve_take_way(value, options):
+    """Map what the host or the user said (堂食 / 外带 / an official code) onto the code this quote's takeWayList really offers.
+
+    The code for 外带 differs by store (take-in-store, or locker-in whose title is still 外带), so the offered list decides.
+    Returns None when the quote offers nothing matching."""
+    if not value:return None
+    options = [o for o in (options or []) if isinstance(o, dict)]
+    code_of = lambda o: o.get('code', o.get('takeWayCode'))
+    for o in options:
+        if str(code_of(o)) == str(value):return code_of(o)
+    kind = _take_way_kind(value, value)
+    if not kind:return None
+    for o in options:
+        if _take_way_kind(code_of(o), o.get('title') or o.get('name') or o.get('takeWayName')) == kind:return code_of(o)
+    return None
 
 
 def normalize_elements(value):
