@@ -1,10 +1,11 @@
 {
   "mcpServers": {
     "coupon-split": {
-      "command": "sh",
+      "command": "node",
       "args": [
-        "-c",
-        "if [ -n \"$CLAUDE_PLUGIN_ROOT\" ]; then exec sh \"$CLAUDE_PLUGIN_ROOT/hooks/launch.sh\" server; else exec sh hooks/launch.sh server; fi"
+        "-e",
+        "require(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT || process.cwd(), 'hooks', 'launch.cjs'))",
+        "server"
       ],
       "env": {
         "PYTHONUTF8": "1"

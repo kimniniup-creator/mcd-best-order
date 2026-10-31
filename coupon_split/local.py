@@ -182,3 +182,64 @@ def order_context(store, elements, require_take=True):
             raise ValueError('这个时间暂时不能预约。'+('可选时段：'+'；'.join(ranges) if ranges else '这家店暂未开放预约。'))
         context['reservationDate'] = date
     return context
+
+
+AMAP_SERVICE = ('coupon-split', 'amap')
+
+
+def _env_file_value(name):
+    """One key from the user's own ~/.coupon-split/.env. Only optional, non-ordering keys are read from it."""
+    file = state_dir()/'.env'
+    if not file.exists():
+        return ''
+    from dotenv import dotenv_values
+    return (dotenv_values(file).get(name) or '').strip()
+
+
+def load_amap_key():
+    """The user's own AMap key: environment, then the system credential manager, then ~/.coupon-split/.env."""
+    value = os.environ.get('AMAP_KEY', '').strip()
+    if value:
+        return value
+    try:
+        import keyring
+        value = (keyring.get_password(*AMAP_SERVICE) or '').strip()
+        if value:
+            return value
+    except Exception:
+        pass
+    file = state_dir()/'amap-key'
+    if os.name != 'nt' and file.exists():
+        return file.read_text(encoding='utf-8').strip()
+    return _env_file_value('AMAP_KEY')
+
+
+def save_amap_key(value):
+    try:
+        import keyring
+        keyring.set_password(*AMAP_SERVICE, value)
+        return '系统凭据管理器'
+    except Exception:
+        if os.name == 'nt':
+            raise ValueError('Windows 凭据管理器不可用，请修复 keyring 后重试') from None
+        file = state_dir()/'amap-key'
+        fd = os.open(file, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, 0o600)
+        os.chmod(file, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(value)
+        return '仅本人可读的本机文件'
+
+
+def forget_amap_key():
+    try:
+        import keyring
+        from keyring.errors import PasswordDeleteError
+        try:
+            keyring.delete_password(*AMAP_SERVICE)
+        except PasswordDeleteError:
+            pass
+    except Exception:
+        pass
+    file = state_dir()/'amap-key'
+    if file.exists():
+        file.unlink()

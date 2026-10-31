@@ -141,7 +141,7 @@ class ConfirmationStore:
         record = self.get(key)
         return bool(record and record['state'] == 'creating')
 
-    def finish(self, key, state='used', force=False):
+    def finish(self, key, state='used', force=False, error=None):
         """creating|placing -> used|failed unless a withdrawal arrived; returns False then (the caller withdraws first)."""
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -155,6 +155,8 @@ class ConfirmationStore:
                 return False
             record['state'] = state
             record[state + '_at'] = time.time()
+            if error:
+                record['error'] = error
             db.execute('INSERT OR REPLACE INTO confirmations VALUES (?,?)', (key, json.dumps(record, ensure_ascii=False)))
             return True
 

@@ -59,9 +59,8 @@ def preflight():
     """Prepare the MCP entry point before a cold Codex conversation starts."""
     import asyncio
     import logging
+    import tempfile
     logging.getLogger('mcp').setLevel(logging.ERROR)
-    from mcp import ClientSession,StdioServerParameters
-    from mcp.client.stdio import stdio_client
     async def check():
         params=StdioServerParameters(command=sys.executable,args=['-m','coupon_split.stdio'],env=dict(os.environ))
         async with stdio_client(params,errlog=quiet) as (read,write):
@@ -71,10 +70,53 @@ def preflight():
                 if not any(tool.name=='mcd_start' for tool in tools.tools):raise RuntimeError('缺少点餐入口')
     print('正在准备点餐服务，首次需要下载依赖；不会查询账户或下单。',flush=True)
     try:
-        with open(os.devnull,"w") as quiet:
-            asyncio.run(asyncio.wait_for(check(),timeout=180))
-    except Exception:raise SystemExit('点餐服务启动检查失败；请检查 uv、Git 和网络后重新执行安装第二行。') from None
+        from mcp import ClientSession,StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        with tempfile.TemporaryFile(mode='w+',encoding='utf-8',errors='replace') as quiet:
+            try:asyncio.run(asyncio.wait_for(check(),timeout=180))
+            finally:
+                quiet.seek(0)
+                worker_error=quiet.read()
+    except Exception as exc:
+        from coupon_split.windows_mcp import blocked_component
+        detail=blocked_component(exc)
+        if not detail:detail=blocked_component(ImportError(locals().get('worker_error','')))
+        raise SystemExit(detail or '点餐服务启动检查失败；请检查 uv、Git 和网络后重新执行安装第二行。') from None
+    from coupon_split.windows_mcp import FAILURES,blocked_component
+    for detail in dict.fromkeys(blocked_component(exc) for exc in FAILURES):
+        if detail:print(detail+' 本次已跳过可选的 Windows Job Object，点餐服务可继续使用。')
     print('点餐服务已准备好。请新开 Codex 会话，说“我要吃麦当劳”。')
+
+
+def doctor():
+    """Probe the shipped launcher with the inherited host PATH, offline only."""
+    ok=True
+    for name,fix in (('node','安装 Node.js LTS：https://nodejs.org/'),
+                     ('uv','Windows PowerShell：powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"；macOS/Linux：curl -LsSf https://astral.sh/uv/install.sh | sh')):
+        resolved=shutil.which(name)
+        if resolved:print(name+'：'+resolved)
+        else:
+            print('缺少 '+name+'，宿主无法启动插件。修复：'+fix+'；随后完全退出并重开 Agent。')
+            ok=False
+    print('插件启动和 hooks 不需要 sh；其他宿主的 setup 配置直接运行 uvx，不依赖 Node 或项目 .venv。')
+    if not ok:return False
+    root=Path(__file__).resolve().parent
+    launcher=next((p for p in (root/'assets/hooks/launch.cjs',root.parent/'hooks/launch.cjs') if p.exists()),None)
+    if launcher is None:
+        print('缺少随包启动器。修复：重新安装最新版插件和 coupon-split。')
+        return False
+    try:
+        reply=subprocess.run([shutil.which('node'),str(launcher),'probe'],capture_output=True,text=True,encoding='utf-8',timeout=20)
+        if reply.returncode:raise ValueError(reply.stderr.strip())
+        value=json.loads(reply.stdout)
+        if value['prefix']!=value['base_prefix']:raise ValueError('启动器错误地选择了虚拟环境')
+    except (OSError,ValueError,KeyError,subprocess.TimeoutExpired) as exc:
+        print('启动依赖检查失败：'+str(exc))
+        print('修复：运行 uv python install 3.14，再运行 coupon-split doctor；若报系统应用控制拦截，请修复 uv 托管 Python 安装。不要使用当前项目的 .venv 代替。')
+        return False
+    print('启动解释器：'+value['executable']+'（基础解释器，未使用当前项目 .venv）。')
+    print('启动依赖检查通过；未联网、未安装软件、未连接账户。若宿主仍报找不到命令，请完全退出并重开 Agent，让它继承相同 PATH；旧插件仍调用 sh 时请更新插件。')
+    return True
 
 
 def main():
@@ -108,7 +150,7 @@ def main():
         print('发给开发前请先打开看一眼：里面只有状态、商品码、数量、时间、耗时、错误码和原因标签（如 rate-limited），没有麦当劳的原话、地址、门店、订单号或券码。')
         return
     if args.action=='doctor':
-        preflight()
+        if not doctor():raise SystemExit(1)
         return
     if args.action=='forget-credential':
         if not args.apply:raise SystemExit('需 --apply 同意清除本机凭据；不会删除点餐状态。')
@@ -119,7 +161,9 @@ def main():
         from coupon_split.local import state_dir
         file=state_dir()/'credential'
         if file.exists():file.unlink()
-        print('本机麦当劳凭据已清除。')
+        from coupon_split.local import forget_amap_key
+        forget_amap_key()
+        print('本机麦当劳凭据和高德 Key 已清除。')
         return
     if not args.host:parser.error('setup/uninstall 需要 --host')
     try:

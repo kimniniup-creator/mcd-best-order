@@ -6,10 +6,12 @@
 
 > 同事安装的是公开仓库 [mcd-best-order](https://github.com/kimniniup-creator/mcd-best-order)（下面的命令已经指向它的发布包）；不要克隆私有开发仓库 coupon-split，没有权限，会报 exit 128。
 
+Claude Code / Codex 插件还需要 Node.js LTS（`node --version` 可运行）。Windows 的 Git 使用默认 PATH 选项即可，不要求 `sh`。`coupon-split doctor` 只读检查宿主 PATH 上的 Node、uv 和托管 Python，不安装软件、不连接麦当劳。
+
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split
 ```
 
 ```sh

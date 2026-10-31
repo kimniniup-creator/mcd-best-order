@@ -14,7 +14,8 @@ _EE = 0.00669342162296594323
 
 
 def amap_key():
-    return os.environ.get('AMAP_KEY', '').strip()
+    from coupon_split.local import load_amap_key
+    return load_amap_key()
 
 
 def _outside_china(lat, lng):
@@ -82,3 +83,19 @@ async def reverse_geocode(lat, lng):
     if str(data.get('status')) != '1' or not data.get('regeocode'):
         raise ValueError('定位服务没有返回地名。')
     return landmark(data['regeocode'])
+
+
+async def check_key(key):
+    """One reverse-geocode call on a fixed public point (Tiananmen) to verify a key before saving. No user location is sent."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get('https://restapi.amap.com/v3/geocode/regeo',
+                params={'key': key, 'location': '116.397428,39.90923', 'radius': 100})
+            data = r.json()
+    except (httpx.HTTPError, ValueError):
+        raise ValueError('连不上高德服务，请稍后再试。') from None
+    if str(data.get('status')) != '1':
+        info = str(data.get('info', ''))
+        if 'USERKEY_PLAT_NOMATCH' in info:
+            raise ValueError('这个 Key 不是“Web 服务”类型，请在高德控制台新建 Web 服务 Key。')
+        raise ValueError('高德没有接受这个 Key（' + info + '），请检查是否复制完整。')

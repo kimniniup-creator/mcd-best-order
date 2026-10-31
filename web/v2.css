@@ -407,6 +407,12 @@ button, input, select { font: inherit; color: inherit; }
 .field--bad { border-color: var(--c-fail); }
 .hint { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--c-ink-3); }
 .hint--bad { color: var(--c-fail); font-size: var(--fs-sm); }
+.ob__opt { margin-top: var(--sp-6); padding: var(--sp-2) var(--sp-4); border-radius: var(--r-md); border: 1px solid var(--c-line); font-size: var(--fs-sm); color: var(--c-ink-2); }
+.ob__opt summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--c-ink); }
+.ob__opt summary:focus-visible { outline: 3px solid var(--c-focus); outline-offset: 2px; border-radius: 4px; }
+.ob__opt .field { margin-top: var(--sp-3); }
+.ob__opt input { min-height: 44px; }
+.hint--ok { color: var(--c-save-ink); font-size: var(--fs-sm); }
 .ob__safe { margin-top: var(--sp-6); padding: var(--sp-4); border-radius: var(--r-md); border: 1px solid var(--c-line); display: grid; grid-template-columns: 28px 1fr; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--c-ink-2); }
 .ob__safe i { width: 28px; height: 28px; border-radius: 8px; background: var(--c-paper-sunk); display: grid; place-items: center; }
 .ob__safe i::before { content: ""; width: 14px; height: 16px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'%3E%3Crect x='1.5' y='7' width='11' height='8' rx='2' fill='none' stroke='%235B564C' stroke-width='1.5'/%3E%3Cpath d='M4 7V4.8a3 3 0 016 0V7' fill='none' stroke='%235B564C' stroke-width='1.5'/%3E%3C/svg%3E") center/14px 16px no-repeat; }

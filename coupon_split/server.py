@@ -583,8 +583,10 @@ async def finish_place(t, plan_id, confirm_token, option_id, key=None):
     """
     try:
         plan = await service.place(t,plan_id,confirm_token,option_id,guard=(lambda:confirmations.commit(key)) if key else None)
-    except BaseException:
-        if key:confirmations.finish(key,'failed')
+    except BaseException as exc:
+        if key:
+            from coupon_split import diagnostics
+            confirmations.finish(key,'failed',error='点击确认后下单没有成功，订单没有创建：'+diagnostics.scrub_text(exc))
         raise
     if key and not confirmations.finish(key,'used'):
         # "别下单" arrived while create-order was in flight: the order now exists, so take it back at once.
@@ -939,6 +941,39 @@ async def save_preference(confirmation: str) -> CallToolResult:
         raise ValueError('偏好确认凭证无效或已过期，请重新预览')
     saved=preferences.merge(entry[0],entry[1])
     return result({'stage':'preference_saved','preferences':saved},'已记住。想改随时说，或者说“打开偏好设置”。')
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
+async def list_coupons(session_id: Annotated[str, Field(description='同一对话的 session_id；门店已定时列出这家店、这种取餐方式下能用的券')] = "", store_code: str = "", scope: Literal['store','wallet'] = 'store') -> CallToolResult:
+    """用户问“我有什么券”“这家店能用什么券”时调用。只读，不领券、不下单。
+
+    scope=store（默认）：门店已定（session_id 或 store_code）时，列出这家店按当前取餐方式和时间能用的券；门店没定时改为列出卡包。
+    scope=wallet：列出卡包里的全部券（不保证能在当前门店或取餐方式下用）。
+    券是否真的让这单更便宜，只看 quote_best 的报价；不要根据券面自己算价。
+    """
+    from coupon_split import coupons as cv
+    t=token()
+    cart=owned_cart(session_id) if session_id else None
+    store_code=store_code or (cart or {}).get('store_code') or ''
+    if scope=='store' and store_code:
+        store=get_store_context(t,store_code)
+        elements=normalize_elements((cart or {}).get('elements') or {'fulfillment':store.get('fulfillment') or 'pickup'})
+        if not elements.get('account_name') or not elements.get('account_last4'):
+            a=(await account_info()).structuredContent
+            elements.update(account_name=a['account_name'],account_last4=a['account_last4'])
+        context=order_context(store,elements,require_take=False)
+        args={'storeCode':store_code,'orderType':context['orderType'],'beType':context['beType'],**({'beCode':context['beCode']} if context.get('beCode') else {}),
+              **({'reservationDate':context['reservationDate']} if context.get('reservationDate') else {})}
+        rows=cv.store_view((await upstream.call(t,'query-store-coupons',args))['data'])
+        name=store.get('storeName') or '这家店'
+        data={'scope':'store','store_code':store_code,'coupons':rows,'count':len(rows)}
+        if session_id:data['session_id']=session_id
+        return result(data,cv.store_text(name,rows))
+    raw=(await upstream.call(t,'query-my-coupons',{'page':'1','pageSize':'200'}))['data']
+    rows,total,pages=cv.wallet_view(raw)
+    data={'scope':'wallet','coupons':rows,'count':total,'pages':pages,'usable_now':sum(1 for c in rows if c['usable_now'])}
+    if session_id:data['session_id']=session_id
+    return result(data,cv.wallet_text(rows,total))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
@@ -1605,7 +1640,20 @@ async def setup_page(request):
         return Response(status_code=403)
     from urllib.parse import parse_qs
     global UPSTREAM_TOKEN
-    value=parse_qs((await request.body()).decode()).get('token',[''])[0].strip()
+    form=parse_qs((await request.body()).decode(),keep_blank_values=True)
+    if 'amap_key' in form:
+        # Optional location key: the user's own AMap Web-service key, checked once on a public point, then stored like the token.
+        from coupon_split.geo import check_key
+        from coupon_split.local import save_amap_key
+        key=form['amap_key'][0].strip()
+        try:
+            if not re.fullmatch(r'[0-9a-fA-F]{32}',key):raise ValueError('高德 Key 是 32 位字母和数字，请复制完整')
+            await check_key(key)
+            storage=save_amap_key(key)
+        except ValueError as exc:
+            return JSONResponse({'message':str(exc)},status_code=400,headers={'Cache-Control':'no-store'})
+        return JSONResponse({'message':'定位已开启：以后没说地点时，可以说“打开定位”。','storage':storage},headers={'Cache-Control':'no-store'})
+    value=form.get('token',[''])[0].strip()
     try:
         if not value:raise ValueError('Token 为空，请先从开放平台复制完整 Token')
         info=(await upstream.call(value,'query-my-account',{}))['data']
@@ -2009,6 +2057,7 @@ async def confirm_page(request):
         return JSONResponse({'state':record['state']},headers=headers)
     if path.endswith('/state'):
         body={'state':record['state'],'summary':record['summary']}
+        if record['state'] in {'failed','failure_reported'} and record.get('error'):body['error_reason']=record['error']
         if record['state'] in {'used','failure_reported'} or (record['state']=='creating' and record.get('withdraw_requested')):
             # Once the order exists this page must follow the order, not stay on "已创建".
             body.update(await confirmed_order_view(record))

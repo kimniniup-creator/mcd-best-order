@@ -15,7 +15,7 @@ import tomllib
 import uuid
 
 NAME = 'coupon-split'
-SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl'
+SOURCE = 'https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl'
 SOURCES = {
     # Paths and formats checked against each vendor's documentation.
     'dsh':'https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md',
@@ -38,7 +38,7 @@ ALIASES={'deepseek-harness':'dsh','gemini-cli':'gemini','vscode-copilot':'vscode
 def stdio_entry():
     # uv discovers/downloads Python 3.14, even on a colleague's cold computer.
     return {'command':shutil.which('uvx') or 'uvx',
-            'args':['--python','3.14','--from',SOURCE,'coupon-split-mcp'], 'env':{}}
+            'args':['--no-config','--managed-python','--python','3.14','--from',SOURCE,'coupon-split-mcp'], 'env':{}}
 
 
 def config_path(host, project=None, home=None):

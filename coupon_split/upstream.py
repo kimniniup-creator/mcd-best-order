@@ -13,7 +13,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-READ_ONLY = {"query-nearby-stores", "query-meals", "query-meal-detail", "query-store-coupons", "calculate-price", "query-order", "order-list", "delivery-query-addresses", "delivery-query-stores", "query-my-account"}
+READ_ONLY = {"query-nearby-stores", "query-meals", "query-meal-detail", "query-store-coupons", "query-my-coupons", "calculate-price", "query-order", "order-list", "delivery-query-addresses", "delivery-query-stores", "query-my-account"}
 
 
 def authorization_error(exc):

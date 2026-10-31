@@ -57,6 +57,21 @@
       </li>
     </ol>
 
+    <details class="ob__opt" id="amap">
+      <summary>可选：开启定位找店（需要你自己的高德 Key）</summary>
+      <p>开启后，没说地点时可以回复“打开定位”，用浏览器定位找最近的门店。位置只在你同意后发给高德换算成附近地名，不保存坐标。不开也能正常点餐，说个地标就行。</p>
+      <div class="ob__how"><ol>
+        <li>打开高德开放平台控制台，登录后进入“应用管理”，创建一个应用</li>
+        <li>给应用添加 Key，服务平台选 <b>Web 服务</b></li>
+        <li>复制这个 32 位的 Key，建议同时设一个每日调用上限</li>
+      </ol></div>
+      <div class="ob__act"><a class="btn btn--sm btn--ghost" href="https://console.amap.com/dev/key/app" target="_blank" rel="noreferrer">打开高德控制台 ↗</a></div>
+      <label class="field" id="amap-field"><span class="vh">高德 Key</span><input id="amap-key" type="password" placeholder="粘贴高德 Web 服务 Key" autocomplete="off" spellcheck="false" inputmode="latin"></label>
+      <div class="hint">同样只存在这台电脑的凭据管理器里，别发到对话里。保存前会用一个公开地点（天安门）试一次，确认 Key 能用。</div>
+      <div class="hint" id="amap-msg" role="status" aria-live="polite"></div>
+      <div class="ob__act"><button class="btn btn--sm" type="button" id="amap-save">保存高德 Key</button></div>
+    </details>
+
     <div class="ob__safe"><i aria-hidden="true"></i><div><b>Token 只存在这台电脑上。</b>存进系统自带的凭据管理器（Mac 是钥匙串），不写进日志或对话记录；系统钥匙串不可用时，会按本机支持情况提示。我们不经手钱，付款永远在麦当劳官方页面完成。想停用，去 open.mcd.cn 重新生成即可让旧的作废。</div></div>
   </div>
 </main>
@@ -64,5 +79,6 @@
 <script>
 const $=s=>document.querySelector(s);
 $('#save').onclick=async()=>{const b=$('#save'),input=$('#tok');b.disabled=true;try{const r=await fetch('/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:input.value})}),v=await r.json();document.body.dataset.state=r.ok?'ok':'bad';$('#field').classList.toggle('field--bad',!r.ok);input.setAttribute('aria-invalid',String(!r.ok));if(r.ok){input.value='';$('#s1').className='ob__step is-ok';$('#s2').className='ob__step is-ok';$('#s3').className='ob__step is-now';$('#s3 .ob__okbox h2').textContent=v.message;$('#s3 .ob__acct').textContent='保存在：'+v.storage}else $('#authorize-error').textContent=v.message}catch{$('#authorize-error').textContent='本机连接失败，请重试';document.body.dataset.state='bad'}finally{b.disabled=false}};
+$('#amap-save').onclick=async()=>{const b=$('#amap-save'),i=$('#amap-key'),m=$('#amap-msg');b.disabled=true;m.className='hint';m.textContent='正在校验…';try{const r=await fetch('/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({amap_key:i.value})}),v=await r.json();$('#amap-field').classList.toggle('field--bad',!r.ok);i.setAttribute('aria-invalid',String(!r.ok));m.className=r.ok?'hint hint--ok':'hint hint--bad';m.textContent=r.ok?v.message+'（保存在：'+v.storage+'）':v.message;if(r.ok)i.value=''}catch{m.className='hint hint--bad';m.textContent='本机连接失败，请重试'}finally{b.disabled=false}};
 $('#eye').onclick=()=>{const i=$('#tok');i.type=i.type==='password'?'text':'password';$('#eye').textContent=i.type==='password'?'显示':'隐藏'};
 </script></body></html>

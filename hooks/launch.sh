@@ -8,15 +8,8 @@ if ! command -v uv >/dev/null 2>&1; then
   esac
 fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source='https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl'
-case "$1" in
-  server) exec uv run --offline --no-project --python 3.14 "$root/hooks/stdio_gateway.py" ;;
-  hook) exec uv run --offline --no-project --python 3.14 "$root/hooks/order_context.py" ;;
-  check)
-    if ! uv python find --offline 3.14 >/dev/null 2>&1; then
-      printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"点餐工具首次准备中。若暂时不可用，请稍候再试；持续失败请检查 uv 和网络后重开对话。"}}'
-      exit 0
-    fi
-    exec uv run --offline --no-project --python 3.14 "$root/hooks/order_context.py" startup ;;
-  *) exit 2 ;;
-esac
+if ! command -v node >/dev/null 2>&1; then
+  printf '%s\n' '缺少 Node.js。请安装 Node.js LTS，重开终端和 Agent，再运行 coupon-split doctor。' >&2
+  exit 1
+fi
+exec node "$root/hooks/launch.cjs" "$@"

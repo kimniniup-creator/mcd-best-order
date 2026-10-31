@@ -175,7 +175,7 @@ class Service:
             self.validate_before_place(plan, selected)
             plan.update(state="placing", selected=selected, dry_run=not self.upstream.allow_real)
             if self.upstream.allow_real:
-                before = (await self.upstream.call(token,"order-list",{}))["data"]["list"]
+                before = (await self.upstream.call(token,"order-list",{}))["data"].get("list") or []
                 plan.update(before_order_ids=[o["orderId"] for o in before], placing_started=time.time(), pending_requests=selected["orders"])
             self.save(plan)
             if guard is not None and not guard():
@@ -320,7 +320,7 @@ class Service:
         info = {"ok": False, "ambiguous": False}
         still = list(plan.get("pending_requests", []))
         try:
-            rows = (await self._ask(token, "order-list", {}, deadline_at))["data"]["list"]
+            rows = (await self._ask(token, "order-list", {}, deadline_at))["data"].get("list") or []
             excluded = set(plan.get("before_order_ids",[])) | {o["orderId"] for o in plan["orders"]}
             for pending in list(still):
                 expected=Counter()

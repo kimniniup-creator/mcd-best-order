@@ -4,7 +4,7 @@
 
 ```text
 Claude Code：claude plugin marketplace add kimniniup-creator/mcd-best-order; claude plugin install mcd-best-order@mcd-best-order-marketplace
-Codex：codex plugin marketplace add kimniniup-creator/mcd-best-order; codex plugin add mcd-best-order@mcd-best-order-marketplace; uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+Codex：codex plugin marketplace add kimniniup-creator/mcd-best-order; codex plugin add mcd-best-order@mcd-best-order-marketplace; uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 需要先装 uv 并有自己的麦当劳账户（首次使用按提示把 Token 粘到本机授权页，别发进聊天）；详细步骤见下文。
@@ -28,7 +28,7 @@ Codex：codex plugin marketplace add kimniniup-creator/mcd-best-order; codex plu
 也可自己运行（先预览，核对目标后再加 `--apply`）：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split setup --host cursor
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split setup --host cursor
 ```
 
 Codex 的 IDE/CLI 一键方式是 `--host codex-ide`（同时装 Skill，建议使用）；没有 Skill 的宿主上，笼统的一句话可能不会立刻触发点餐工具，可以说得具体些（例如“我要吃麦当劳，来份板烧”）。
@@ -125,7 +125,7 @@ codex plugin add mcd-best-order@mcd-best-order-marketplace
 ```
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split setup --host codex-plugin --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split setup --host codex-plugin --apply
 ```
 
 最后一步准备点餐服务，并仅为本插件配置工具权限。完成后新开 Codex 对话。**不要对本插件开启全部允许**；本插件在 Codex 中不能独立核对聊天原文，下单和撤回仍保留逐次允许；wait_payment 和 pay_card 只读查询无需逐次允许。缺 uv 或点餐启动失败时，其他 Codex 对话仍可继续。
@@ -133,7 +133,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 如果 VS Code 里的 Codex 插件没有插件安装入口，可在终端执行这一段，再新开对话：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split setup --host codex-ide --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split setup --host codex-ide --apply
 ```
 
 ## 连账户，开始点餐
@@ -165,7 +165,7 @@ uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download
 下单或撤回出了问题，在终端执行下面的命令，导出一份诊断文件，发给开发。文件按白名单字段生成（状态、商品码和数量、时间、耗时、错误码、原因标签如 `rate-limited`），不含 Token、订单号、券码、地址、门店名和地址、手机号、姓名、付款链接，也不复制麦当劳的原话；发之前自己打开看一眼：
 
 ```text
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split diagnose
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split diagnose
 ```
 
 文件保存在用户主目录，名为 `mcd-order-diagnosis-<时间>.json`。本机的 `orders.log`（在点餐状态目录里，不会被导出原文）每次下单、撤回只记录耗时、HTTP 状态、麦当劳的错误码和说明、traceId。
@@ -193,19 +193,29 @@ Claude Code 可以执行 `/plugin uninstall mcd-best-order@mcd-best-order-market
 
 ## 国内访问 GitHub 慢怎么办
 
-首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.9.1 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.9.1)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+首次下载可能需要几分钟。先在浏览器检查能否打开本仓库和 [0.9.2 下载页](https://github.com/kimniniup-creator/mcd-best-order/releases/tag/v0.9.2)，确认网络可用后重试。不要从陌生镜像下载，也不需要申请作者私有仓库权限。成功安装的固定版本会优先从已下载的文件启动，之后 GitHub 暂时无法连接也不影响启动；查询菜单和价格仍需要访问麦当劳。
+
+## 可选：定位找店
+
+不说地点时，可以用浏览器定位找最近的门店。这需要你**自己的高德 Web 服务 Key**；插件不附带共用 Key，没配就照常问地标。
+
+- 推荐：打开本机授权页（第一次连账户的那一页，或在对话里说“重新授权”），展开“可选：开启定位找店”，粘贴 Key 并保存。保存前会用一个公开地点试一次；Key 存在系统凭据管理器，和麦当劳 Token 一样不进对话、不进日志。
+- 或者：在 `~/.coupon-split/.env`（或你设定的 `COUPON_SPLIT_HOME`）里写一行 `AMAP_KEY=你的Key`。这个文件只读这一项，不会读下单相关的设置。
+- 环境变量 `AMAP_KEY` 优先级最高。
+
+申请 Key：高德开放平台控制台 → 应用管理 → 创建应用 → 添加 Key，服务平台选“Web 服务”。建议同时设每日调用上限。用户在对话里同意、并在浏览器允许定位后，坐标才会发给高德换算成附近地名，不保存坐标。
 
 ## 卸载与清除凭据
 
 结束点餐对话后，先在终端清除本机凭据：
 
 ```text
-uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.1/coupon_split-0.9.1-py3-none-any.whl coupon-split forget-credential --apply
+uvx --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split forget-credential --apply
 ```
 
 Claude Code 执行 `/plugin uninstall mcd-best-order@mcd-best-order-marketplace`；Codex 执行上面的 `codex plugin remove ...`。移除插件后，再移除插件市场：Claude Code 执行 `/plugin marketplace remove mcd-best-order-marketplace`；Codex 在终端执行 `codex plugin marketplace remove mcd-best-order-marketplace`。
 
-上面的 `forget-credential --apply` 会清掉助手保存在这台电脑的凭据。清除凭据不会删除购物车；无需保留历史时，可自行删除自己的 `~/.coupon-split/` 目录（或自己设定的 `COUPON_SPLIT_HOME`）。在开放平台重新生成 Token 可以让旧凭据作废。
+上面的 `forget-credential --apply` 会清掉助手保存在这台电脑的凭据（麦当劳 Token 和高德 Key）。清除凭据不会删除购物车；无需保留历史时，可自行删除自己的 `~/.coupon-split/` 目录（或自己设定的 `COUPON_SPLIT_HOME`）。在开放平台重新生成 Token 可以让旧凭据作废。
 
 仅支持中国大陆麦当劳。价格随门店、时段和本人账户变化，搜索次数有限，不保证全局最低。验证码和付款由你本人完成。
 

@@ -11,7 +11,8 @@ function render(v){
     const link=v.payment_path&&['awaiting_payment','verifying','partial','paid'].includes(v.order_state)?`<p><a href="${esc(v.payment_path)}">打开付款页</a></p>`:'';
     const live=['awaiting_payment','verifying'].includes(v.order_state)||['approved','placing','creating'].includes(v.state);
     const withdrawBtn=live?`<div class="row"><button id="withdraw" class="withdraw">撤回这单</button></div>`:'';
-    card.innerHTML=`<h2>${esc(s.store)}</h2><p class="done">${shown}</p>${link}${withdrawBtn}`;if(live)$('#withdraw').onclick=()=>act('withdraw');$('#note').hidden=true;$('h1').textContent=({withdrawn:'已撤回',expired:'已过期',paid:'已付款'}[v.order_state])||'已处理';return;
+    const reason=v.error_reason?`<p class="reason">原因：${esc(v.error_reason)}</p>`:'';
+    card.innerHTML=`<h2>${esc(s.store)}</h2><p class="done">${v.error_reason?shown.replace('回到对话看原因。','你可以回到对话说“重新下单”。'):shown}</p>${reason}${link}${withdrawBtn}`;if(live)$('#withdraw').onclick=()=>act('withdraw');$('#note').hidden=true;$('h1').textContent=({withdrawn:'已撤回',expired:'已过期',paid:'已付款'}[v.order_state])||'已处理';return;
   }
   card.innerHTML=`<h2>${esc(s.store)} · ${esc(s.way)}</h2><ul>${s.lines.map(r=>`<li><span>${esc(r.name)} ×${r.quantity}</span><span>¥${esc(r.amount_yuan)}</span></li>`).join('')}</ul><div class="total"><span>实付</span><span>¥${esc(s.price_yuan)}</span></div><p>${esc(s.payments_note)}。</p>${s.real?'<p class="real">点击后会在麦当劳创建<b>真实</b>的待付款订单，需要你在 15 分钟内用手机付款，否则自动撤回。</p>':'<p class="sim">当前是模拟模式，不会产生真实订单。</p>'}<div class="row"><button class="go" id="go">确认下单 ¥${esc(s.price_yuan)}</button><button id="no" class="withdraw">撤回这单</button></div>`;
   $('#go').onclick=()=>act('approve');$('#no').onclick=()=>act('withdraw');

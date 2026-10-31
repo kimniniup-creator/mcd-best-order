@@ -1611,6 +1611,42 @@
     }
   },
   {
+    "name": "list_coupons",
+    "description": "用户问“我有什么券”“这家店能用什么券”时调用。只读，不领券、不下单。\n\nscope=store（默认）：门店已定（session_id 或 store_code）时，列出这家店按当前取餐方式和时间能用的券；门店没定时改为列出卡包。\nscope=wallet：列出卡包里的全部券（不保证能在当前门店或取餐方式下用）。\n券是否真的让这单更便宜，只看 quote_best 的报价；不要根据券面自己算价。\n",
+    "inputSchema": {
+      "properties": {
+        "session_id": {
+          "default": "",
+          "description": "同一对话的 session_id；门店已定时列出这家店、这种取餐方式下能用的券",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "store_code": {
+          "default": "",
+          "title": "Store Code",
+          "type": "string"
+        },
+        "scope": {
+          "default": "store",
+          "enum": [
+            "store",
+            "wallet"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "list_couponsArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
     "name": "account_info",
     "description": "读取本人账户，仅返回账户后四位与本机别名，不返回完整账户号。",
     "inputSchema": {
