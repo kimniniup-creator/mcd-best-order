@@ -188,7 +188,12 @@ class Service:
                 if self.upstream.allow_real and not plan.get("elements_validated"):
                     raise NotSent("订单要素未完整验证，禁止下单")
                 req.update({k:v for k,v in plan.get("order_elements",{}).items() if k in {"takeWayCode","needTableware"} and v is not None})
-                if req.get("beType")==2:req.pop("takeWayCode",None)
+                if needs_address(req):
+                    # calculate-price has no addressId; only use the address validated for this plan.
+                    req["addressId"] = plan["order_elements"]["addressId"]
+                    req.pop("takeWayCode", None)
+                else:
+                    req.pop("addressId", None)
                 if not self.upstream.allow_real:
                     fake_id = "dry-"+uuid.uuid4().hex
                     # internal-tool mode: the simulated pending order carries an official-shaped pay link (a made-up order id), so the
@@ -287,6 +292,10 @@ class Service:
         return plan
 
     def validate_before_place(self, plan, selected):
+        if any(needs_address(o['request']) for o in selected['orders']):
+            address = plan.get('order_elements', {}).get('addressId')
+            if not isinstance(address, str) or not address.strip():
+                raise NotSent('请选择已保存的配送地址后重新报价，订单没有创建')
         if plan.get('elements_pending') or not plan.get('elements_validated'):
             raise ValueError('订单要素未完整验证：堂食/外带还没有选定')
         demand = plan.get('requested_items')
@@ -521,6 +530,11 @@ class Service:
             if plan['state'] not in {'awaiting_payment','verifying'} or time.monotonic()>=until:
                 return plan
             await asyncio.sleep(min(3,max(0,until-time.monotonic())))
+
+
+def needs_address(request):
+    """The create-order contract requires an address for delivery and group meals."""
+    return str(request.get('orderType')) == '2' or str(request.get('beType')) in {'2', '6'}
 
 
 def failure_info(exc):

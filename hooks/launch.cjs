@@ -18,7 +18,7 @@ function unavailable(message) {
     try { request = JSON.parse(line); } catch { return; }
     if (!Object.hasOwn(request, 'id')) return;
     let result = {};
-    if (request.method === 'initialize') result = {protocolVersion: request.params?.protocolVersion || '2025-03-26', capabilities: {tools: {}}, serverInfo: {name: '点餐安装提示', version: '0.9.2'}, instructions: message};
+    if (request.method === 'initialize') result = {protocolVersion: request.params?.protocolVersion || '2025-03-26', capabilities: {tools: {}}, serverInfo: {name: '点餐安装提示', version: '0.9.3'}, instructions: message};
     if (request.method === 'tools/list') result = {tools: [{name: 'mcd_start', description: message, inputSchema: {type: 'object', properties: {utterance: {type: 'string'}}, required: ['utterance']}, annotations: {readOnlyHint: true, destructiveHint: false, openWorldHint: false}}]};
     if (request.method === 'tools/call') result = {content: [{type: 'text', text: message}], structuredContent: {stage: 'install', next_tool: null, display_markdown: message}, isError: false};
     console.log(JSON.stringify({jsonrpc: '2.0', id: request.id, result}));

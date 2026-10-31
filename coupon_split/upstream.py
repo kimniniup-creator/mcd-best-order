@@ -70,9 +70,9 @@ def business_message(code, message):
     if str(code) == '60006':
         return '这个餐品现在无法下单：可能已售罄，也可能是套餐选配数量不符，请重新选配或换一道餐品。麦当劳原话：' + (text or '商品已售罄或不可售')
     if str(code) == '600012':
-        return '套餐选配数量超出限制，请重新选配。麦当劳原话：' + text
+        return '麦当劳拒绝了本次计价或下单，请按原提示检查后重新报价。麦当劳原话：' + text
     if str(code) == '600010':
-        return '优惠券参数有误，请重新报价。麦当劳原话：' + text
+        return '麦当劳拒绝了缺失或无效的必填参数，请检查订单信息后重新报价。麦当劳原话：' + text
     if any(word in text for word in ('不可售', '停售', '售罄', '未售', '不支持外送')):
         return '所选餐品暂不可售，请换一道餐品或改为到店自取。麦当劳原话：' + text
     return ('麦当劳提示：' + text) if text else '麦当劳暂时无法处理这次请求，请稍后重试'

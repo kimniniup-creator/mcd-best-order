@@ -219,6 +219,12 @@ def supports_elicitation(ctx):
 def order_summary(plan, selected, take_way_label=''):
     """What the person is shown: the shop, what is bought, and the exact amount."""
     way = {'pickup': '到店自取', 'drive': '得来速', 'delivery': '麦乐送'}.get((plan.get('order_elements') or {}).get('fulfillment'), '到店自取')
+    elements = plan.get('order_elements') or {}
+    if elements.get('fulfillment') == 'delivery':
+        from coupon_split.presentation import human_time
+        # Both the confirmation page and elicitation render this label.
+        way += ' · 送到 ' + (elements.get('delivery_address') or '所选配送地址')
+        way += ' · ' + human_time(elements.get('reservationDate'), delivery=True)
     lines = []
     for order in selected['orders']:
         for row in order['productList']:

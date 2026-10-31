@@ -7,7 +7,7 @@
 2. 已装 uv 时运行下面命令，把 `<host>` 换为表中的名字。先预览；用户的“帮我安装”授权包含对应 MCP 注册，可核对路径后添加 `--apply`。没有安装授权时只预览。不要改模型、全局审批或其他 MCP。
 
    ```sh
-   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.2/coupon_split-0.9.2-py3-none-any.whl coupon-split setup --host <host>
+   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.3/coupon_split-0.9.3-py3-none-any.whl coupon-split setup --host <host>
    ```
 
 3. 默认使用文档支持的项目配置；只提供全局配置的宿主会显示实际目标。隔离环境用 `--project <workspace> --home <isolated-home>` 或 `--config <actual-config-path>`。保留已有条目；写入前安装器会保留原文件备份。不要把 Token 写到仓库或聊天。
@@ -22,6 +22,6 @@
 
 默认不再要人工确认：说想吃什么，`quote_best` 算最低价并直接建单，回复只给总价和每单付款链接，付款即确认；付款页是写在本机状态目录的静态 HTML。`COUPON_SPLIT_HUMAN_CONFIRM=true` 恢复确认页和上面的确认规则，`COUPON_SPLIT_MAX_ORDER_YUAN` 调整单次总额上限（默认 300 元）。
 
-## 0.9.2 回复再砍短
+## 0.9.3 回复再砍短
 
 到店自取默认外带，不再问“堂食还是外带”，用户自己说“堂食”才用堂食（得来速没说才问）。`take_way` 传“堂食”或“外带”，服务端按本店报价的 `takeWayList` 对上官方代码：外带在有的门店是 `take-in-store`，有的是 `locker-in`（取餐柜，title 仍是“外带”）。调用工具前后不输出过程说明，用户只看到问题本身，或最终的金额加付款链接。
