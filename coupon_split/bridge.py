@@ -194,7 +194,7 @@ async def run():
                 # unpaid order can still be paid or withdrawn; only when nothing holds the page do we leave.
                 if time.monotonic()-held_checked>=1:
                     held_checked=time.monotonic()
-                    try:hold=max(s.confirmations.live_until(),s.service.hold_until())
+                    try:hold=max(s.confirmations.live_until(),s.address_requests.live_until(),s.service.hold_until())
                     except Exception:hold=time.time()+5  # cannot tell: stay up, retry
                     if time.time()>hold:
                         service.should_exit=True;return

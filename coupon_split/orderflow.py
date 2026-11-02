@@ -329,6 +329,8 @@ async def apply(s, t, sid, interp, utterance, check_items=True, stores=None):
                     ambiguous.append({'slot': 'address', 'candidates': [grounding.address_view(a) for a in candidates], 'ask': problems[0]['fact']})
                 else:
                     violations.extend(problems)
+                    await s.offer_address(sid,city,hint or landmark)
+                    missing.append({'slot':'address','reason':'用户可在本机新增地址页面亲自填写并保存'})
         else:
             resolved['address'] = {'value': {'addressId': str(address_id)}, 'source': source_of(e, 'addressId')}
         if address_id and stores is None:

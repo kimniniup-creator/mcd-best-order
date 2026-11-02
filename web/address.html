@@ -1,0 +1,22 @@
+﻿<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>新增收货地址</title>
+<style>body{font:16px/1.6 system-ui;background:#f7f5ef;color:#24231f;margin:0;padding:24px}main{max-width:540px;margin:auto;background:white;padding:28px;border-radius:18px}h1{font-size:26px}label{display:block;margin:14px 0}input,select,button{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1px solid #aaa;border-radius:8px}button{background:#ffbc0d;color:#221b00;font-weight:bold;margin-top:14px;cursor:pointer}pre{white-space:pre-wrap;background:#f7f5ef;padding:16px}#message{color:#97361c}small{color:#555}</style>
+<main><h1>新增收货地址</h1><p>请亲自填写，核对后保存到你的麦当劳账户。无需在对话里发送手机号。</p>
+<form id="form">
+<label>城市<input name="city" maxlength="80" required autocomplete="address-level2"></label>
+<label>小区 / 楼 / 路<input name="address" maxlength="200" required autocomplete="street-address"></label>
+<label>门牌<input name="addressDetail" maxlength="100" required></label>
+<label>收货人<input name="contactName" maxlength="40" required autocomplete="name"></label>
+<label>称呼<select name="gender"><option value="">不填写</option><option>先生</option><option>女士</option></select></label>
+<label>手机号<input name="phone" type="tel" inputmode="numeric" maxlength="11" pattern="1[0-9]{10}" required autocomplete="tel"></label>
+<small>请核对以下完整信息。只有点击保存才会写入账户。</small><pre id="review"></pre>
+<button id="save">保存到我的麦当劳账户</button></form><p id="message" role="status" aria-live="polite"></p></main>
+<script>
+const form=document.querySelector('#form'), review=document.querySelector('#review'), message=document.querySelector('#message'), button=document.querySelector('#save');
+const labels={city:'城市',address:'小区 / 楼 / 路',addressDetail:'门牌',contactName:'收货人',gender:'称呼',phone:'手机号'};
+function show(){review.textContent=Object.entries(Object.fromEntries(new FormData(form))).map(([k,v])=>labels[k]+'：'+v.trim()).join('\n')}
+form.addEventListener('input',show);
+function state(data){if(data.state==='saved'){form.hidden=true;message.textContent='已保存，回到对话继续';return true}if(data.state!=='pending'){form.hidden=true;message.textContent=data.error||'链接已失效或正在保存，请回到对话查看。';return true}return false}
+fetch(location.pathname+'/state',{cache:'no-store'}).then(r=>r.json()).then(data=>{if(state(data))return;for(const [k,v] of Object.entries(data.prefill||{}))form.elements[k].value=v;show()}).catch(()=>{message.textContent='页面暂时无法连接，请重试'});
+form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;message.textContent='正在保存…';try{const response=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(form)))});const data=await response.json();if(!response.ok){message.textContent=data.error||'保存失败，请重试';button.disabled=false;return}state(data)}catch{message.textContent='连接中断，请回到对话核实，勿重复保存'}});
+</script></html>

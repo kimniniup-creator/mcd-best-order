@@ -55,6 +55,8 @@ from coupon_split.confirmation import confirm_rule_text
 # How long a withdrawal waits for an in-flight create-order to come back before it reports the pending withdrawal.
 WITHDRAW_WAIT = 90
 confirmations = ConfirmationStore(runtime / "confirmations.sqlite3")
+from coupon_split.addresspage import AddressStore, redact as redact_address
+address_requests = AddressStore(state_dir() / "addresses.sqlite3")
 active_credentials = {}  # memory only; local default is recovered on restart
 conversation_id = secrets.token_urlsafe(24)
 store_context = {}
@@ -127,10 +129,12 @@ def order_state(data):
 
 def result(data, text):
     data=dict(data)
+    actions=data.get('allowed_actions')
     data['state'],data['allowed_actions']=order_state(data)
+    if actions is not None:data['allowed_actions']=actions
     data['state_about']=onto.STATES[data['state']]['about']
     needed={k:data[k] for k in onto.STATES[data['state']].get('replyRequires',[]) if data.get(k)}
-    if needed:data['reply_must_show_user']=needed
+    if needed:data['reply_must_show_user']={**data.get('reply_must_show_user',{}),**needed}
     # Some MCP clients (including DSH) project only content[].text to the model, others only
     # structuredContent. Everything the host needs is written to both (see agent_block).
     stage=data.get('stage',{'quoted':'quote','awaiting_payment':'placed'}.get(data.get('state'),'pick'))
@@ -284,6 +288,8 @@ async def resolve_order(utterance: Annotated[str, Field(description='逐字复�
     memory.write(owner(t),dict(state,active_session=sid))
     report=await orderflow.apply(sys.modules[__name__],t,sid,interpretation.model_dump(),utterance)
     cart=carts[sid]
+    address_reply=await address_required(sid)
+    if address_reply:return address_reply
     if not cart.get('items') and cart.get('intent') and not cart.get('intent_resolved') and cart.get('store_code') and not cart.get('pending_foods'):
         # a food named in an earlier sentence (without foods) waits for the store; now there is one
         await resolve_cart_intent(cart,t)
@@ -1076,7 +1082,7 @@ memory = LocalState(runtime/"memory")
 from coupon_split.prefs import Preferences
 preferences = Preferences(runtime/"preferences")
 carts = CartStore(runtime/'carts.sqlite3')
-pending_addresses = {}
+
 bridge_port = None
 bridge_server = None
 bridge_task = None
@@ -1196,7 +1202,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；
     返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。
     报价后用户说的标准确认句（“确认下单”“确认”“同意下单”“就这样下单”，可带金额）由 place_orders 处理，不属于本工具。
-    缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。
+    缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token 或手机号；新地址由用户在本机新增地址页亲自填写并保存。
     """
     import re
     from datetime import datetime, timedelta
@@ -1384,6 +1390,8 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
         carts[sid]=cart
         grounded=await orderflow.apply(sys.modules[__name__],t,sid,{},utterance,check_items=False)
         cart=dict(carts[sid]);e=cart['elements']
+    address_reply=await address_required(sid)
+    if address_reply:return address_reply
     await resolve_cart_intent(cart,t)
     if (continuing and not structured and not cart['items'] and not cart.get('intent_question') and not active.get('items') and active.get('intent')
             and not active.get('intent_resolved') and cart.get('intent')!=active['intent']):
@@ -1582,51 +1590,120 @@ async def get_location(session_id: str, wait: int = 25) -> CallToolResult:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
 async def delivery_addresses() -> CallToolResult:
     data=await upstream.call(token(),"delivery-query-addresses",{})
-    return result(data,"账户已保存的配送地址如上；新地址须单独确认。")
+    return result(redact_address(data),"账户已保存的配送地址如上；新地址请在本机新增地址页亲自填写并保存。")
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=True))
+async def address_link(record):
+    page=(await local_url())+'/address/'+record['key']
+    return {'stage':'add_address','address_url':page,'confirmation':record['key'],
+            'session_id':record['session_id'],'address_state':record['state'],
+            'reply_must_show_user':{'address_url':page},'links':{'address_url':page},
+            'next_tool':{'name':'wait_address','arguments':{'session_id':record['session_id'],'confirmation':record['key'],'wait':55}},
+            'allowed_actions':['wait_address']}
+
+
+async def offer_address(sid, city='', address=''):
+    cart=carts[sid]
+    record=address_requests.get(cart.get('address_request',''),cart['owner'])
+    if not record or record['state'] in {'expired','failed'}:
+        record=address_requests.create(cart['owner'],sid,city,address)
+        cart['address_request']=record['key']
+        carts[sid]=cart
+    return record
+
+
+async def address_required(sid):
+    cart=carts[sid]
+    if cart['elements'].get('fulfillment')!='delivery':return None
+    record=address_requests.get(cart.get('address_request',''),cart['owner'])
+    if not record or record['state']=='saved':return None
+    data=await address_link(record)
+    data['missing']=[{'slot':'address','reason':'请在本机页面亲自填写并保存新地址'}]
+    data['violations']=cart.get('violations',[])
+    return result(data,'[新增收货地址]('+data['address_url']+')；请亲自填写并点击保存，保存后自动继续。助手不得填写手机号或点击保存。')
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 async def prepare_address(address: dict) -> CallToolResult:
-    """仅准备用户提供的新地址，返回遮挡手机号的确认卡；不写入上游。"""
-    required={"city","address","addressDetail","contactName","phone"}
-    if not required.issubset(address) or not all(address[k] for k in required):
-        raise ValueError("新地址字段不完整")
-    confirmation=secrets.token_urlsafe(24)
-    pending_addresses[confirmation]=(owner(token()),dict(address))
-    visible=dict(address,phone=address["phone"][:3]+"****"+address["phone"][-4:])
-    return result({"address":visible,"confirmation":confirmation},"地址待用户逐项核对，确认后才会保存到麦当劳账户。")
+    """兼容旧入口：仅用 city/address 预填本机新增地址页。不要收集或传入手机号；用户亲自填写并点击保存。"""
+    record=address_requests.create(owner(token()),city=str(address.get('city','')),address=str(address.get('address','')))
+    data=await address_link(record)
+    return result(data,'请亲自在[新增收货地址]('+data['address_url']+')页面填写并保存；随后调用 wait_address 等待。')
 
 
-@mcp.tool(meta={"anthropic/requiresUserInteraction":True},annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
 async def confirm_address(confirmation: str) -> CallToolResult:
-    t=token(); pending=pending_addresses.get(confirmation)
-    if not pending or pending[0]!=owner(t):
-        raise ValueError("地址确认凭证无效或已使用")
-    address=pending_addresses.pop(confirmation)[1]
-    existing=await upstream.call(t,"delivery-query-addresses",{})
-    def contains(v):
-        if isinstance(v,dict):
-            if all(str(v.get(k,""))==str(address[k]) for k in ("address","addressDetail")) or (str(address["address"])+str(address["addressDetail"])).replace(" ","") in str(v.get("fullAddress","")).replace(" ",""):
-                return v
-            for x in v.values():
-                found=contains(x)
-                if found:return found
-        if isinstance(v,list):
-            for x in v:
-                found=contains(x)
-                if found:return found
-    found=contains(existing)
-    if found:return result({"existing":True,"addressId":found.get("addressId")},"地址已存在，未重复创建。")
-    signature=__import__('hashlib').sha256(json.dumps(address,sort_keys=True).encode()).hexdigest()
-    state=memory.read(owner(t))
-    attempts=state.setdefault('address_attempts',{})
-    if signature in attempts:
-        return result({'already_submitted':True},'该地址已提交过；不会重复创建，可在已有地址里核实。')
-    attempts[signature]='submitted'
-    memory.write(owner(t),state)
-    upstream.confirmed_addresses.add((owner(t),json.dumps(address,sort_keys=True)))
-    data=await upstream.call(t,"delivery-create-address",address)
-    return result(data,"地址已保存。")
+    """兼容旧入口，已弃用对话确认。只读取页面保存状态或返回页面；本工具绝不创建地址。改用 wait_address。"""
+    return await wait_address(confirmation=confirmation,wait=0)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))
+async def wait_address(session_id: str = '', confirmation: str = '', wait: int = 55) -> CallToolResult:
+    """发出新增地址链接后立即调用，最多等 55 秒；用户亲自在页面保存后自动接续同一订单，无需用户再说好了。未完成则继续等待；不得代填手机号或点击。"""
+    account=owner(token())
+    cart=owned_cart(session_id) if session_id else None
+    key=confirmation or (cart.get('address_request','') if cart else '')
+    record=address_requests.get(key,account)
+    if not record or (session_id and record['session_id']!=session_id):raise ValueError('地址链接无效')
+    until=time.monotonic()+min(55,max(0,wait))
+    while record['state'] in {'pending','saving'} and time.monotonic()<until:
+        await asyncio.sleep(.25)
+        record=address_requests.get(key,account)
+    if record['state']!='saved':
+        data=await address_link(record)
+        if record['state'] in {'failed','expired'}:
+            data.pop('next_tool',None)
+            data['allowed_actions']=['mcd_start'] if record['session_id'] else ['prepare_address']
+        if record['state']=='failed':data['error']=record.get('error','地址保存失败')
+        return result(data,data.get('error') or ('地址链接已过期，请重新打开。' if record['state']=='expired' else '请在新增地址页面亲自填写并保存，保存后自动继续。'))
+    data=dict(record['result'],address_state='saved',session_id=record['session_id'])
+    sid=record['session_id']
+    if sid:
+        cart=owned_cart(sid)
+        if cart['elements'].get('fulfillment')=='delivery' and cart.get('address_applied')!=key:
+            # The page selected this saved ID; do not re-match the original unrecognised hint.
+            original_utterance=cart.get('last_utterance','')
+            report=await orderflow.apply(sys.modules[__name__],token(),sid,{'address_id':data['addressId']},'',check_items=False)
+            cart=carts[sid]
+            cart.update(address_applied=key,last_utterance=original_utterance)
+            await resolve_cart_intent(cart,token())
+            carts[sid]=cart
+            data.update(resolved=report['resolved'],missing=report['missing'],violations=report['violations'],ambiguous=report['ambiguous'])
+        data.update(store_code=cart.get('store_code'),elements=cart['elements'],selected_items=cart.get('items',[]))
+        ready=cart.get('items') and cart.get('store_code') and not (cart.get('violations') or cart.get('open_questions'))
+        data['next_tool']={'name':'quote_best' if ready else 'resolve_order','arguments':{'session_id':sid,**({} if ready else {'utterance':cart.get('last_utterance',''),'interpretation':{}})}}
+    return result(data,'地址已保存：'+data['summary']+'。继续原来的点餐。')
+
+
+async def address_page(request):
+    from coupon_split.addresspage import save_clicked
+    key=request.path_params['key']
+    headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
+    record=address_requests.get(key)
+    if not record:return JSONResponse({'error':'地址链接无效'},404,headers=headers)
+    t=token_for_owner(record['owner'])
+    if not t or owner(t)!=record['owner']:return JSONResponse({'error':'账户连接已失效，请回到对话重新授权'},401,headers=headers)
+    import hashlib, hmac
+    csrf=hmac.new(LOCAL_KEY.encode(),key.encode(),hashlib.sha256).hexdigest()
+    if request.method=='POST':
+        if (request.headers.get('origin')!='http://'+request.headers.get('host','') or
+            request.headers.get('sec-fetch-site') not in {'same-origin','none'} or
+            not secrets.compare_digest(request.cookies.get('address_csrf',''),csrf)):
+            return JSONResponse({'error':'只能在新增地址页面亲自点击保存'},403,headers=headers)
+        if record['state'] not in {'pending','saved','saving'}:return JSONResponse({'error':'链接已失效，请回到对话重新打开'},409,headers=headers)
+        if record['state']=='pending':
+            try:
+                values=await request.json()
+                if not isinstance(values,dict):raise ValueError('请填写完整的地址字段')
+                record=await save_clicked(address_requests,record,t,upstream,values)
+            except (ValueError,TypeError):
+                return JSONResponse({'error':'请填写完整地址；手机号须为以 1 开头的 11 位数字，字段不能超过长度限制'},400,headers=headers)
+        return JSONResponse({k:record[k] for k in ('state','result','error') if k in record},headers=headers)
+    if request.url.path.endswith('/state'):
+        return JSONResponse({k:record[k] for k in ('state','prefill','result','error') if k in record},headers=headers)
+    response=FileResponse(ROOT/'web/address.html',headers=headers)
+    response.set_cookie('address_csrf',csrf,httponly=True,samesite='strict',path='/address/'+key)
+    return response
 
 
 async def setup_page(request):
@@ -2107,7 +2184,7 @@ else:  # human-confirmation mode: the sentence is required, as before r32
         _required.insert(2, 'user_confirmation')
 
 
-app = Auth(Starlette(routes=[Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}/withdraw',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}/withdraw',payment_page,methods=['POST']),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route("/locate/{session_id}",locate_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),*__import__('coupon_split.admin',fromlist=['routes']).routes(ROOT,preferences),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
+app = Auth(Starlette(routes=[Route('/address/{key}/state',address_page),Route('/address/{key}',address_page,methods=['GET','POST']),Route('/confirm/{key}/state',confirm_page),Route('/confirm/{key}/approve',confirm_page,methods=['POST']),Route('/confirm/{key}/decline',confirm_page,methods=['POST']),Route('/confirm/{key}/withdraw',confirm_page,methods=['POST']),Route('/confirm/{key}',confirm_page),Route('/payment/{payment_key}/state',payment_page),Route('/payment/{payment_key}/withdraw',payment_page,methods=['POST']),Route('/payment/{payment_key}',payment_page),Route('/bridge-health',bridge_health),Route("/",index),Route("/setup",setup_page,methods=["GET","POST"]),Route("/order/{session_id}/state",cart_state,methods=['GET','POST']),Route("/order/{session_id}/menu",cart_menu),Route("/order/{session_id}",order_page,methods=["GET","POST"]),Route("/locate/{session_id}",locate_page,methods=["GET","POST"]),Route('/quote-status',quote_status,methods=['POST']),*__import__('coupon_split.admin',fromlist=['routes']).routes(ROOT,preferences),Route("/favicon.ico",favicon),Mount("/web",app=StaticFiles(directory=ROOT/"web")),Route('/design/{name}',style_file),Route('/design/v2/{name}',style_file),Mount("/",app=http_mcp)],lifespan=lifespan))
 
 if __name__ == "__main__":
     import uvicorn

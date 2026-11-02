@@ -11,7 +11,7 @@ Claude Code / Codex 插件还需要 Node.js LTS（`node --version` 可运行）�
 先准备 [uv](https://docs.astral.sh/uv/getting-started/installation/)，无需自己安装 Python。下文 `coupon-split` 均可替换为：
 
 ```sh
-uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.3/coupon_split-0.9.3-py3-none-any.whl coupon-split
+uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.4/coupon_split-0.9.4-py3-none-any.whl coupon-split
 ```
 
 ```sh
@@ -97,3 +97,5 @@ Cursor/Kiro 可用 `url`，VS Code 可用 `type:http` + `url`，Gemini CLI 的 S
 安装自检不要下单。完整模拟测试须显式设 `COUPON_SPLIT_SIMULATE=true`、`ALLOW_REAL_ORDERS=false`；若宿主会清理环境，将这两个非秘密开关放进本插件配置的 env。仅看到 tools/list 或配置语法正确，只能记为“配置验证”，不能记为“宿主完整实测”。
 
 Codex 的配置里本服务标为 `required = true`：Codex 会等它启动完再开始第一轮，不然首轮可能还没有工具；代价是服务起不来（没装 uv、没网）时 Codex 会直接报错而不是悄悄继续。`setup --host codex-ide --uninstall --apply` 移除这个条目。
+
+外送新增地址：外送地址可以是账户已保存的地址，或用户在本机“新增地址”页面亲自填写并点击保存的新地址；助手不在对话里收集手机号，不替用户填写或点击。页面保存后调用 `wait_address` 自动接续原订单，不要求用户回来说“好了”。

@@ -30,7 +30,7 @@
         "drive": {"label": "得来速", "aliases": ["得来速", "开车", "开车去"], "storeQuery": "nearby", "needs": ["city", "landmark"]},
         "delivery": {"label": "麦乐送外送", "aliases": ["外送", "外卖", "送到", "麦乐送", "送过来"], "storeQuery": "address", "needs": ["address"]}
       }},
-      "DeliveryAddress": {"label": "外送地址", "rule": "只能是账户里已保存的地址；用户的说法（地标、门号、别名）与已保存地址比对，不新建、不改写。", "matchBy": "用户说法里的区分性片段与已保存地址文本的重合", "aliases": {"学校": ["大学", "学院", "校区", "中学", "小学"], "公司": ["大厦", "广场", "科技", "园区", "中心", "写字楼", "产业园"], "家": ["小区", "花园", "苑", "公寓", "家园", "里", "村"]}},
+      "DeliveryAddress": {"label": "外送地址", "rule": "外送地址可以是账户已保存的地址，或用户在本机“新增地址”页面亲自填写并点击保存的新地址；助手不在对话里收集手机号，不替用户填写或点击。", "matchBy": "用户说法里的区分性片段与已保存地址文本的重合", "aliases": {"学校": ["大学", "学院", "校区", "中学", "小学"], "公司": ["大厦", "广场", "科技", "园区", "中心", "写字楼", "产业园"], "家": ["小区", "花园", "苑", "公寓", "家园", "里", "村"]}},
       "TimeWindow": {"label": "时间窗", "kinds": {"immediate": "现在就取/送", "reserve": "预约到某天某时"}, "source": "门店返回的 reservationTimeOptions 与营业时段"},
       "Item": {"label": "商品", "grounding": "词面经 concepts 落到门店实时菜单；价格与商品码只来自菜单"},
       "ComboSlot": {"label": "套餐选配槽", "rule": "每个选配槽有官方候选与数量范围；用户没说的槽用官方默认项并告诉用户"},
@@ -42,7 +42,7 @@
         "ask": "用户原话没有表达取餐方式、也没有可信的已保存选择时必须问", "default": "原话里有地址且是账户已保存的外送地址、或明说送到/外送 → delivery；明说自取/到店 → pickup"},
       "city": {"entity": "Store", "values": "城市名", "sources": ["user_utterance", "saved_data"], "ask": "自取或得来速且无法从地标判断城市时必须问", "default": "沿用本会话上一次的城市"},
       "landmark": {"entity": "Store", "values": "地标、小区、街道", "sources": ["user_utterance", "device_location"], "ask": "自取或得来速且没有地标、也没有定位时必须问", "default": "无"},
-      "address": {"entity": "DeliveryAddress", "values": "账户已保存地址之一", "sources": ["user_utterance", "saved_data"], "ask": "外送且用户的说法对上不止一个已保存地址、或一个也对不上时必须问", "default": "账户只有一个已保存地址且用户已明说外送：仍然列出让用户确认，不替用户默认"},
+      "address": {"entity": "DeliveryAddress", "values": "账户已保存地址之一（含用户刚在本机页面亲自保存的地址）", "sources": ["user_utterance", "saved_data"], "ask": "外送且用户的说法对上多个已保存地址时询问选择；一个也对不上时提供本机新增地址页并等待用户亲自保存", "default": "账户只有一个已保存地址且用户已明说外送：仍然列出让用户确认，不替用户默认"},
       "store": {"entity": "Store", "values": "门店查询返回的门店", "sources": ["lookup"], "ask": "候选超过一家且用户对距离或店名有偏好时才问", "default": "最近的一家，并告诉用户是哪家"},
       "time": {"entity": "TimeWindow", "values": ["immediate", "reserve"], "sources": ["user_utterance", "default"], "ask": "用户说的时间不在门店可选时段内，或说法含糊（几点、上午下午）时必须问", "default": "没提时间 → immediate"},
       "items": {"entity": "Item", "values": "菜单商品加数量", "sources": ["user_utterance", "saved_data"], "ask": "词面对应多个商品、对应不到商品、或规格没有官方选项时必须问；只说想吃没有指明时先问想吃什么", "default": "套餐选配槽没说时用官方默认项"},
@@ -59,7 +59,7 @@
       "TIME_IN_PAST": {"slot": "time", "fact": "{time} 已经过去了（现在是 {now}）。", "alternative": "给一个晚于现在的时间"},
       "TIME_OUTSIDE_WINDOW": {"slot": "time", "fact": "{store}在{date}可预约的时段是：{windows}；{time} 不在其中。", "alternative": "从这些时段里选一个时间"},
       "IMMEDIATE_NOT_AVAILABLE": {"slot": "time", "fact": "{store}现在（{now}）不在可下单时段内，当天可预约的时段是：{windows}。", "alternative": "选这些时段内的一个时间，或改天"},
-      "ADDRESS_NOT_SAVED": {"slot": "address", "fact": "外送地址必须是账户里已保存的地址；「{hint}」没有对上任何一个。已保存的地址有 {count} 个。", "alternative": "从已保存地址里选一个，或让用户先在麦当劳 App 里保存新地址"},
+      "ADDRESS_NOT_SAVED": {"slot": "address", "fact": "外送需先选一个已保存地址或在本机页面新增；「{hint}」没有对上任何一个。已保存的地址有 {count} 个。", "alternative": "从已保存地址里选一个，或打开本机新增地址页由用户亲自填写并保存"},
       "ADDRESS_AMBIGUOUS": {"slot": "address", "fact": "「{hint}」同时对上了 {count} 个已保存地址。", "alternative": "让用户指出是哪一个"},
       "ITEM_NOT_FOOD": {"slot": "items", "fact": "「{phrase}」{note}", "alternative": "问用户想吃什么餐品"},
       "ITEM_NOT_FOUND": {"slot": "items", "fact": "「{phrase}」在{store}当前菜单里没有对上任何商品。", "alternative": "问用户想点的具体餐品，可以列出菜单里相近的类别"},
@@ -98,7 +98,7 @@
     "replyRequiresAbout": "这些字段的内容用户必须在你的回复里看到：用户看不到工具返回，只看得到你发的消息；服务端无法看到你的回复，也不代为转达",
     "reply_format": {
       "about": "给用户的回复的格式约束（不是预填文案：服务端不替 Agent 写句子，只给事实字段和这些规则）。默认的内部工具模式下，用户说想吃什么，只想要价格和付款入口。",
-      "ask": "问问题时只问一个问题，一句话，不解释原因，可给选项，如“外送还是自取？”“送哪个地址：A / B”。到店自取不问堂食还是外带（默认外带，用户自己说堂食才用堂食）。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；自取才问城市和地标。",
+      "ask": "问问题时只问一个问题，一句话，不解释原因，可给选项，如“外送还是自取？”“送哪个地址：A / B”。到店自取不问堂食还是外带（默认外带，用户自己说堂食才用堂食）。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；没有匹配地址时发新增地址页链接并立即用 wait_address 等待保存；自取才问城市和地标。",
       "after_order": "下单后每单一行“¥金额 付款链接”（链接取 payment_links[].url，电脑扫码用 payment_links[].file）；拆成多单时第一行写总价 total_yuan。不解释为什么拆单，不罗列优惠明细，不重复餐品，不讲流程；用户追问时再说。",
       "no_narration": "调用工具前后不输出过程说明；用户能看到的只有问题本身，或者最终的金额加付款链接。",
       "never": ["过程说明（我会查…、正在获取…、官方代码是…我用这个重新建单）", "优惠原因", "拆单理由", "流程说明", "门店、地址、餐品的复述", "付款截止时间和不付款的后果（付款页上有）", "确认或授权的叙述（付款本身就是确认）"]
@@ -118,7 +118,7 @@
       "不得代造、拼接或补写用户的确认原文，user_confirmation 只能逐字复制用户最后一条消息",
       "撤回随时可用：用户表达不想要的意思，就调用 withdraw_order，并如实转告结果",
       "价格、优惠、规格、拆单只来自服务端对麦当劳的实时计价，不自行编价或承诺最低",
-      "外送地址只能是账户已保存的地址，不创建、不改写",
+      "外送地址可以是账户已保存的地址，或用户在本机“新增地址”页面亲自填写并点击保存的新地址；助手不在对话里收集手机号，不替用户填写或点击",
       "付款由用户本人完成"
     ]
   },

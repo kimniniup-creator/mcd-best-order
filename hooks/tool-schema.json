@@ -1663,7 +1663,7 @@
   },
   {
     "name": "mcd_start",
-    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token，不创建地址。\n",
+    "description": "开始或修改一单麦当劳点餐。utterance 逐字传用户本轮原话，foods 传你理解出的餐品。\n服务端从原话里读取取餐方式、外送地址、时间，并对上账户已保存的地址和门店的预约时段；\n返回已确定的、缺的（missing）和违反的约束（violations）。更细的槽位用 resolve_order 传入。\n缺授权时返回本机授权页 setup_url；授权在本机页面完成，不在聊天里索要 Token 或手机号；新地址由用户在本机新增地址页亲自填写并保存。\n",
     "inputSchema": {
       "properties": {
         "utterance": {
@@ -1811,7 +1811,7 @@
   },
   {
     "name": "prepare_address",
-    "description": "仅准备用户提供的新地址，返回遮挡手机号的确认卡；不写入上游。",
+    "description": "兼容旧入口：仅用 city/address 预填本机新增地址页。不要收集或传入手机号；用户亲自填写并点击保存。",
     "inputSchema": {
       "properties": {
         "address": {
@@ -1827,15 +1827,15 @@
       "type": "object"
     },
     "annotations": {
-      "readOnlyHint": false,
+      "readOnlyHint": true,
       "destructiveHint": false,
-      "idempotentHint": false,
-      "openWorldHint": true
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
     "name": "confirm_address",
-    "description": "",
+    "description": "兼容旧入口，已弃用对话确认。只读取页面保存状态或返回页面；本工具绝不创建地址。改用 wait_address。",
     "inputSchema": {
       "properties": {
         "confirmation": {
@@ -1850,13 +1850,41 @@
       "type": "object"
     },
     "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true,
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "wait_address",
+    "description": "发出新增地址链接后立即调用，最多等 55 秒；用户亲自在页面保存后自动接续同一订单，无需用户再说好了。未完成则继续等待；不得代填手机号或点击。",
+    "inputSchema": {
+      "properties": {
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "confirmation": {
+          "default": "",
+          "title": "Confirmation",
+          "type": "string"
+        },
+        "wait": {
+          "default": 55,
+          "title": "Wait",
+          "type": "integer"
+        }
+      },
+      "title": "wait_addressArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true
-    },
-    "_meta": {
-      "anthropic/requiresUserInteraction": true
     }
   }
 ]
