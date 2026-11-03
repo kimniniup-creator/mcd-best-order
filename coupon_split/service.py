@@ -186,7 +186,7 @@ class Service:
             async def create(order):
                 req = dict(order["request"])
                 if self.upstream.allow_real and not plan.get("elements_validated"):
-                    raise NotSent("订单要素未完整验证，禁止下单")
+                    raise NotSent("取餐信息还没选好，订单没有创建。")
                 req.update({k:v for k,v in plan.get("order_elements",{}).items() if k in {"takeWayCode","needTableware"} and v is not None})
                 if needs_address(req):
                     # calculate-price has no addressId; only use the address validated for this plan.
@@ -297,7 +297,7 @@ class Service:
             if not isinstance(address, str) or not address.strip():
                 raise NotSent('请选择已保存的配送地址后重新报价，订单没有创建')
         if plan.get('elements_pending') or not plan.get('elements_validated'):
-            raise ValueError('订单要素未完整验证：堂食/外带还没有选定')
+            raise ValueError('请选择堂食或外带。')
         demand = plan.get('requested_items')
         if not demand or not isinstance(demand[0], dict):
             raise ValueError('缺少原始规格需求')
@@ -306,11 +306,11 @@ class Service:
         for order in selected['orders']:
             ev = evidence.get(order.get('evidence_id'))
             if not ev or composition_key(order['request']) != composition_key(ev['request']):
-                raise ValueError('下单前复核：商品码、规格或数量与核价依据不一致')
+                raise ValueError('餐品、规格或数量与刚才的报价不一致，请重新报价。')
             if not validate_quantities(order['request'], ev['response']['data']):
                 raise ValueError('下单前复核：计价数量不一致')
             if order['price'] != ev['response']['data']['price']:
-                raise ValueError('下单前复核：金额与核价依据不一致')
+                raise ValueError('金额与刚才的报价不一致，请重新报价。')
             joined.extend(order['request']['items'])
         if specification_coverage(joined) != specification_coverage(demand):
             raise ValueError('下单前复核：商品码、规格或数量与原始需求不一致')
@@ -336,7 +336,9 @@ class Service:
                 for i in pending["request"]["items"]:
                     expected[i["productCode"]]+=i["quantity"]
                 if pending["request"].get("withOrder"):
-                    expected["521234"]+=1
+                    for row in pending["productList"]:
+                        if row.get("is_card") or row["productCode"] == ("514696" if pending["request"]["withOrder"].get("cardId") else "521234"):
+                            expected[row["productCode"]]+=row["quantity"]
                 matches=[]
                 for r in rows:
                     if r["orderId"] in excluded or str(r.get("storeCode")) != str(plan["storeCode"]):

@@ -10,7 +10,7 @@ description: 麦当劳点餐入口。用户想吃、点、外送麦当劳，或�
 1. 用户说想吃什么：`mcd_start`（逐字传用户本轮原话，`foods` 是字符串列表，每项“餐品名 数量”，如 `["麦辣鸡腿堡 2份","中薯"]`，`session_id` 沿用前一轮返回的）。规格（去冰、大杯等）放在 `resolve_order` 的 `interpretation.foods[].spec`。
 2. 缺信息只问一个短问题（一句话，不解释，可给选项）：“外送还是自取？”“送哪个地址：A / B”。到店自取默认外带，不问堂食还是外带，用户自己说“堂食”才用堂食（得来速没说才问）。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；没有匹配地址时发新增地址页链接并立即用 wait_address 等待保存；自取才问城市和地标。用户没说、也不能默认的才问，不替用户选。
 3. `state` 是 `items_ready`：调用 `quote_best`。它算出最低价方案（可以拆成多单）并**直接建单**，返回 `payment_links`。付款本身就是确认；不付款的单由麦当劳超时自动取消。
-4. 只有得来速还差堂食/外带时 `quote_best` 才只返回报价：问用户一句，再 `place_orders(plan_id, confirm_token, take_way=“堂食”或“外带”)`；`take_way` 传用户原话里的这两个词，服务端按本店报价对上官方代码（外带在有的门店是 `take-in-store`，有的是 `locker-in` 取餐柜），不要自己猜代码。总价超过单次上限（返回里有 `over_limit`）时不建单：告诉用户金额，用户回复“确认下单 ¥金额”后，把原话逐字交给 `place_orders(user_confirmation=...)`。
+4. 报价返回 `offers` 时，先按下文“报价后的可选优惠”等用户选择，不直接建单。得来速还差堂食/外带时 `quote_best` 才只返回报价：问用户一句，再 `place_orders(plan_id, confirm_token, take_way=“堂食”或“外带”)`；`take_way` 传用户原话里的这两个词，服务端按本店报价对上官方代码（外带在有的门店是 `take-in-store`，有的是 `locker-in` 取餐柜），不要自己猜代码。总价超过单次上限（返回里有 `over_limit`）时不建单：告诉用户金额，用户回复“确认下单 ¥金额”后，把原话逐字交给 `place_orders(user_confirmation=...)`。
 5. 用户表达不要了、取消、不吃了、改天、等一下、先别：立刻 `withdraw_order`，如实转告结果。“不要香菜”“换成大杯可乐”只是改餐品。
 
 ## 工具语义
@@ -45,3 +45,7 @@ description: 麦当劳点餐入口。用户想吃、点、外送麦当劳，或�
 - 管理员可以用环境变量 `COUPON_SPLIT_HUMAN_CONFIRM=true` 恢复人工确认（报价后要用户在确认页点击），`COUPON_SPLIT_MAX_ORDER_YUAN` 改单次总额上限（默认 300 元）。
 - MCP 启动失败且缺 uv 时，转达安装提示。Windows PowerShell：`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`；macOS/Linux：`curl -LsSf https://astral.sh/uv/install.sh | sh`。未经用户同意不要代执行安装，安装后重开终端和你的 Agent。
 - Codex 在回合开始后几秒才加载完 MCP 工具（uvx 启动约 3 秒，冷环境更久）：回合开头工具列表里暂时没有点餐工具，是启动还没完成。点餐工具一直没有时如实说没有加载上，不编造点餐结果。
+
+## 报价后的可选优惠
+
+返回 `offers` 时，先把其中的短问题和金额告诉用户，等待选择，不直接建单。用户接受换店或升杯后调用 `choose_price_offer` 重新报价；选择买卡时把对应 `option_id` 交给 `place_orders`；拒绝可选优惠则按原报价下单。早餐卡首单加价必须如实说，不能称为这单更便宜；回本只适用于有效期内每次点同样一份。不要向用户解释查询或计价的实现。

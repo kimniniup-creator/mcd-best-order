@@ -32,6 +32,23 @@ def money(value):
     return f"¥{value/100:.2f}"
 
 
+def offer_rows(plan):
+    rows=[]
+    seen=set()
+    for p in plan.get('plans',[]):
+        card=p.get('card_offer')
+        if not card or card['extra']<=0 or card['name'] in seen:continue
+        seen.add(card['name'])
+        text=f"开 {card['name']}：这单多付 {money(card['extra'])}"
+        if card['later_saving']>0:
+            text+=f"，之后同样一份每单省 {money(card['later_saving'])}，第 {card['payback_orders']} 单回本（须在卡有效期内）"
+        if card.get('validity'):text+='；有效期：'+card['validity']
+        rows.append(dict(kind='card',option_id=p['option_id'],text=text+'，要开吗？'))
+    for kind in ('store','size'):
+        if plan.get(kind+'_offer'):rows.append(dict(kind=kind,text=plan[kind+'_offer']['text']))
+    return rows
+
+
 def distance(value):
     try:
         meters = float(value)
@@ -53,7 +70,7 @@ def option_difference(candidate, current):
         counts = Counter()
         for order in p['orders']:
             for row in order['productList']:
-                if row['productCode'] == '521234':
+                if row.get('is_card') or row['productCode'] == '521234':
                     continue
                 # Contents already contain totals for all units of this package.
                 for item in row.get('contents') or [dict(name=row['productName'], quantity=row['quantity'])]:
@@ -96,15 +113,17 @@ def quote_summary(plan, option_id="0"):
             packing_note='已免' if o.get('packing_waived') else '本单无打包费' if o.get('packingPrice')==0 else '',
             coupon='；'.join(o.get('coupons',[])) or '不用',subtotal_yuan=f"{o['price']/100:.2f}"))
     result.update(comparison_summary=plan.get('comparison_summary',{}),stage='quote',price=p['price'],savings=p['savings'],order_count=n,payment_count=n,orders_count=n,payments_count=n,payments_note=f'需依次支付 {n} 笔' if n>1 else '付 1 次',
-        headline=(f"帮你省 {money(p['savings'])}：照原样 {money(plan['baseline'])} → 实付 {money(p['price'])}" if p['savings'] else f"这单已是最低价 {money(p['price'])}"),
+        headline=(f"帮你省 {money(p['savings'])}：照原样 {money(plan['baseline'])} → 实付 {money(p['price'])}" if p['savings'] else f"这次比较下来，这单最省 {money(p['price'])}"),
         save_yuan=f"{p['savings']/100:.2f}",baseline_yuan=f"{plan['baseline']/100:.2f}",pay_yuan=f"{p['price']/100:.2f}",
-        card_fee=sum(r['subtotal'] for o in p['orders'] for r in o['productList'] if r['productCode']=='521234'),
+        card_fee=sum(r['subtotal'] for o in p['orders'] for r in o['productList'] if r.get('is_card') or r['productCode']=='521234'),
         elements=element_rows(plan),elements_pending=plan.get('elements_pending',[]),orders=orders,
         coverage=[dict(name=names.get(c,c),quantity=q,basis='same_code') for c,q in p['coverage'].items()],
         extras=[dict(name=names.get(c,c),quantity=q) for c,q in p['extras'].items()],
         no_card={k:plan['no_card'][k] for k in ('option_id','price','savings')} if p.get('buys_card') and plan.get('no_card',{}).get('savings',0)>0 else None,
         excluded_count=len(plan.get('exclusions',[])),
         reply_options=([{'n':i,'say':str(i),'does':v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐','take_way':v.get('code',v.get('takeWayCode'))} for i,v in enumerate(plan['take_options'],1)] if plan.get('take_options') else [{'n':1,'say':'1','does':'堂食并确认'},{'n':2,'say':'2','does':'外带并确认'}]) if plan.get('elements_pending') else [])
+    result['offers']=offer_rows(plan)
+    result.update({k:plan[k] for k in ('store_comparison_calls','size_comparison_calls','size_detail_calls','suggestion_price_calls','total_price_calls','hint_upstream_calls','hint_cache_hits') if k in plan})
     return public(result)
 
 
@@ -209,13 +228,13 @@ def markdown(plan):
     if plan["state"] == "quoted":
         p=plan['plans'][0];n=len(p['orders']);e=plan.get('order_elements',{})
         way={'pickup':'到店自取','drive':'得来速','delivery':'麦乐送'}.get(e.get('fulfillment'),'到店自取')
-        headline=(f"**帮你省 {money(p['savings'])}**　照原样 {money(plan['baseline'])} → 实付 **{money(p['price'])}**" if p['savings'] else f"**这单已是最低价 {money(p['price'])}**　没找到比照原样更省的下法")
+        headline=(f"**帮你省 {money(p['savings'])}**　照原样 {money(plan['baseline'])} → 实付 **{money(p['price'])}**" if p['savings'] else f"**这次比较下来，这单最省 {money(p['price'])}**　按你点的餐品和规格比较")
         rows=[headline+f'　·　{n} 单 · '+(f'需依次支付 {n} 笔' if n>1 else '付 1 次'),'','| | |','|---|---|']
         rows += [f"| {r['label']} | {r['value']}"+('（'+r['mark']+'）' if r.get('mark') else '')+' |' for r in element_rows(plan)]
         for i,o in enumerate(p['orders'],1):
             rows += [f"\n单 {i}｜{plan.get('storeName','所选门店')} · {way}",'']
             for row in o['productList']:
-                fee='【卡费】' if row['productCode']=='521234' else ''
+                fee='【卡费】' if row.get('is_card') or row['productCode']=='521234' else ''
                 rows.append(f"- {fee}{row['productName']} ×{row['quantity']}　{money(row['subtotal'])}")
                 detail=line_detail(plan,row)
                 if detail:rows.append(('  - 每套：' if len(row.get('contents',[]))>1 else '  - 规格：')+detail)
@@ -223,16 +242,19 @@ def markdown(plan):
                 rows += [f"- 配送费　{money(o['deliveryPrice'])}",f"- 打包费　{money(o['packingPrice'])}"+('（已免）' if o.get('packing_waived') else '（本单无打包费）' if o['packingPrice']==0 else '')]
             rows += ['- 用券：'+('；'.join(o.get('coupons',[])) or '不用'),f"- 本单实付 **{money(o['price'])}**"]
         names=coverage_names(plan)
-        rows += ['\n对得上你点的：'+' · '.join(f'{names.get(c,c)} ×{q}' for c,q in p['coverage'].items())+'；多出来的：'+('、'.join(f'{names.get(c,c)} ×{q}' for c,q in p['extras'].items()) or '无')]
+        rows += ['\n你点的：'+' · '.join(f'{names.get(c,c)} ×{q}' for c,q in p['coverage'].items())+'；另含：'+('、'.join(f'{names.get(c,c)} ×{q}' for c,q in p['extras'].items()) or '无')]
         if p.get('buys_card') and plan.get('no_card',{}).get('savings',0)>0:
             rows += [f"\n不想买卡：不买卡最低 {money(plan['no_card']['price'])}（省 {money(plan['no_card']['savings'])}），说“不买卡”换这个。"]
             if p.get('buys_card'):rows += [f"买卡后本单比不买卡再省 {money(plan['no_card']['price']-p['price'])}。"]
         if plan.get('take_options'):
             rows += ['\n本次可选的取餐方式：'+'；'.join(str(i)+' '+(v.get('name') or v.get('takeWayName') or v.get('title') or '门店取餐') for i,v in enumerate(plan['take_options'],1))+'。']
-        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认下单** 才会下单；说“取消”或“不要了”随时撤回。'+('真实下单还需要你在浏览器确认页或弹出的确认弹窗里再确认一次（Claude Code、Codex 也一样），因为只有这一步能证明是你本人在下单。' if plan.get('real_orders_enabled') else '模拟模式回复“确认下单”即可演示，不产生真实订单。')]
+        else:rows += ['\n还差一项：回复 **1 堂食并确认下单** 或 **2 外带并确认下单**。' if plan.get('elements_pending') else '\n回复 **确认下单** 才会下单；说“取消”或“不要了”随时撤回。'+('真实下单前，还需要你亲自在确认页或弹窗里确认一次。' if plan.get('real_orders_enabled') else '模拟模式回复“确认下单”即可演示，不产生真实订单。')]
         if p['price']>20000:rows += [f"\n本单超过 ¥200，还需追加确认：**确认下单 ¥{p['price']/100:.2f}**。"]
         if not plan.get('real_orders_enabled'):rows += ['\n当前为模拟模式，不产生真实订单。']
-        if plan.get('comparison_summary'):rows += ['\n比较摘要：'+plan['comparison_summary']['text']+'\n\n'+plan['comparison_summary']['scope']]
+        options=(plan.get('comparison_summary') or {}).get('options') or []
+        # One plain line for the eater; the full comparison stays in the structured result.
+        if len(options)>1:rows += [f'\n比了 {len(options)} 种买法，这是最便宜的。']
+        rows += ['\n'+offer['text'] for offer in offer_rows(plan)]
         return '\n'.join(rows)
     if plan.get("dry_run"):
         n=len(plan["orders"])
@@ -270,5 +292,5 @@ def markdown(plan):
         link = f"[打开付款页]({plan.get('payment_url','')})" if plan['state']=='awaiting_payment' and str(o.get('status'))=='10' and official_payment_url(o.get('payH5Url')) and payment.get('mobilePayUrl') else "当前状态请勿付款"
         rows.append(f"单 {i}｜{money(o['price'])}｜{o['orderStatus']}｜{link}｜{o['expirePayTime']} 前付款。")
     if plan.get('late_found') and plan['state'] == 'awaiting_payment':
-        rows.insert(0, '**其实已经下成了。**麦当劳刚才没及时回复，我核对账户订单后确认这单已经建好，没有撤回。请在 15 分钟内付款（付款页，或微信麦当劳小程序 → 我的订单（能否直接付款待实测））。')
-    return "\n\n".join(rows)+"\n\n请在15分钟内付款。必须安装麦当劳 App。电脑请打开付款页，用手机麦当劳 App 扫一扫（推荐），也可用微信扫一扫；手机可直接打开 App。备选：微信麦当劳小程序 → 我的订单（能否直接付款待实测；App 订单页目前可能看不到本单）。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’。"
+        rows.insert(0, '**其实已经下成了。**麦当劳刚才没及时回复，我核对账户订单后确认这单已经建好，没有撤回。请在 15 分钟内付款（付款页，或微信麦当劳小程序 → 我的订单，能否付款以页面显示为准）。')
+    return "\n\n".join(rows)+"\n\n请在15分钟内付款。必须安装麦当劳 App。电脑请打开付款页，用手机麦当劳 App 扫一扫（推荐），也可用微信扫一扫；手机可直接打开 App。备选：微信麦当劳小程序 → 我的订单，能否付款以页面显示为准。钱直接付到麦当劳官方收银台，我们不经手。想撤回，说‘撤回订单’。"

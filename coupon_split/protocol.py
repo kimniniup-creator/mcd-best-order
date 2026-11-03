@@ -1,7 +1,7 @@
 """Host-independent guidance shared by MCP and the cold discovery gateway: the ontology in brief, the safety invariants, tool meanings."""
 from coupon_split.confirmation import confirm_rule_text, withdraw_rule_text
 
-LEGACY_RISK_NOTICE = '默认会真实下单。报价后你明确确认，真实下单还需要在浏览器确认页（或宿主弹出的确认弹窗，填入实付金额后接受）里再确认一次，之后才会创建待付款订单；Claude Code、Codex 等宿主也一样，多这一次是因为服务端无法证明宿主或模型有没有伪造你的话，也无法相信宿主自报的名字，所以真实下单必须有一次它自己能验证的人工点击。付款由你本人完成。想先试用请开启模拟模式：模拟模式只回复“确认下单”即可，不弹窗、不产生真实订单。回复“确认下单”才会下单；不想要了随时撤回：确认页和付款页都有“撤回这单”按钮，也可以直接告诉我，我会立刻帮你撤回。'
+LEGACY_RISK_NOTICE = '这是实际点餐，会创建真实待付款订单。报价后请明确确认，再亲自在确认页或弹窗中核对金额并确认一次；付款由你本人完成。想先试用可开启模拟模式，不产生真实订单。回复“确认下单”才会下单；不想要了随时撤回：确认页和付款页都有“撤回这单”按钮，也可以直接告诉我。'
 
 LEGACY_INSTRUCTIONS = '''麦当劳点餐。你（宿主 Agent）理解用户、决定下一步怎么说怎么做；服务端把你的理解落到麦当劳的真实数据上，并做确定性校验。
 
@@ -60,6 +60,11 @@ DIRECT_INSTRUCTIONS = '''麦当劳点餐（内部工具）。你（宿主 Agent�
 工具
 mcd_start 起步或修改；resolve_order 按槽位传入你的理解；find_store、get_menu、get_item_detail、propose_cart 查店配餐；list_coupons 列出这家店能用的券或卡包（只读，用户问“有什么券”时用）；quote_best 核价并建单；place_orders 补堂食/外带或超限确认后建单；pay_card、wait_payment 查付款；withdraw_order 撤回。
 '''
+
+
+PRICE_OFFER_GUIDANCE = '\n报价返回 offers 时，先把短问题和金额发给用户，等本人选择，不直接建单。接受换店或同价升杯后用 choose_price_offer 重新报价；接受买卡用 place_orders 和 offers 中的 option_id；拒绝优惠用原 option_id 下单。卡首单更贵时如实说加价、未来同餐节省及有效期内回本条件，不称本单更省。用户没答不能擅自换店、换规格或买卡。\n'
+DIRECT_INSTRUCTIONS += PRICE_OFFER_GUIDANCE
+LEGACY_INSTRUCTIONS += PRICE_OFFER_GUIDANCE
 
 
 def build_instructions(human):

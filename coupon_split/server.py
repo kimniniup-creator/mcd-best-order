@@ -128,10 +128,15 @@ def order_state(data):
 
 
 def result(data, text):
+    from coupon_split.usercopy import user_text
+    text=user_text(text)
     data=dict(data)
     actions=data.get('allowed_actions')
     data['state'],data['allowed_actions']=order_state(data)
     if actions is not None:data['allowed_actions']=actions
+    if data.get('offers'):
+        data['allowed_actions']=list(dict.fromkeys([*data['allowed_actions'],'choose_price_offer','place_orders']))
+        data['reply_must_show_user']={**data.get('reply_must_show_user',{}),'offers':data['offers']}
     data['state_about']=onto.STATES[data['state']]['about']
     needed={k:data[k] for k in onto.STATES[data['state']].get('replyRequires',[]) if data.get(k)}
     if needed:data['reply_must_show_user']={**data.get('reply_must_show_user',{}),**needed}
@@ -182,11 +187,14 @@ async def lookup_stores(t, fulfillment, city="", keyword="", address_id=""):
         city = grounding.normalize_city(city)
         r = await upstream.call(t, "query-nearby-stores", {"city":city,"keyword":keyword,"beType":5 if fulfillment=="drive" else 1,"searchType":2})
     stores = r["data"] if isinstance(r["data"],list) else r["data"].get("stores",[])
+    stores = [s for s in stores if not s.get('violations')]
     stores = sorted(stores,key=lambda s:float(s.get("distance") or 1e12))[:5]
     stores = [{"storeCode":str(s["storeCode"]),"storeName":s.get("storeName",s.get("name","门店")),"distance":distance(s.get("distance")),"beCode":s.get("beCode"),"reservationTimeOptions":s.get("reservationTimeOptions",[]),"business_hours":s.get("businessHours") or s.get("businessTime") or s.get("openTime") or "",
               "businessStatus":s.get("businessStatus"),"businessStartTime":s.get("businessStartTime"),"businessEndTime":s.get("businessEndTime")} for s in stores]
     for s in stores:
         s['fulfillment']=fulfillment
+        s['comparison_scope']={'fulfillment':fulfillment,'city':city,'keyword':keyword,'addressId':address_id}
+        s['nearby_codes']=[v['storeCode'] for v in stores]
         store_context[(owner(t),s["storeCode"])]=s
     previous=memory.read(owner(t))
     previous["last_search"]={"city":city,"keyword":keyword,"fulfillment":fulfillment,"store_code":stores[0]["storeCode"] if stores else None}
@@ -408,7 +416,7 @@ async def get_item_detail(store_code: str, product_code: str, elements: OrderEle
     return result({'detail':detail,'default_item':default_item(detail)},detail.get('name',product_code)+'：可以按官方默认规格，也可以更换下面的选项。')
 
 
-QUOTE_DIRECT_DESCRIPTION = '向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。总价超过单次上限、或得来速还差堂食/外带时不建单，返回报价和缺的事实；到店自取默认外带，不用问。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。'
+QUOTE_DIRECT_DESCRIPTION = '向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。返回 offers 时先问用户是否买卡、换店或同价升杯，不建单；接受换店/升杯用 choose_price_offer，买卡或拒绝优惠用 place_orders。总价超过单次上限、或得来速还差堂食/外带时也不建单，返回报价和缺的事实；到店自取默认外带，不用问。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。'
 
 
 @mcp.tool(description=None if HUMAN_AT_IMPORT else QUOTE_DIRECT_DESCRIPTION,annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=not HUMAN_AT_IMPORT,idempotentHint=False,openWorldHint=True))
@@ -430,7 +438,7 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
         raise ValueError('购物车里还有没解决的问题，不能报价：'+'；'.join([v['fact'] for v in active.get('violations',[])]+[q['fact'] for q in active.get('open_questions',[])]))
     if not items and active and active.get('items'):
         items,store_code=copy.deepcopy(active['items']),store_code or active.get('store_code') or ''
-    if not items or not store_code:raise ValueError('缺少餐品或门店：先传 items 和 store_code，或传已确定餐品和门店的 session_id')
+    if not items or not store_code:raise ValueError('还没选好餐品或门店，请先选一下。')
     if active and active.get('recommendation_pending'):
         raise ValueError('配餐方案尚待用户认可（服务端认得的回答是“就这样”“换备选”）；认可前不能报价')
     previous=state.get('elements',{})
@@ -485,6 +493,20 @@ async def quote_best(items: list[str] | list[dict] | None = None, store_code: st
     if unmet:
         raise ValueError('不能报价：'+'；'.join(f"SPEC_NOT_APPLIED {v['fact']}可行：{v['alternative']}" for v in unmet))
     plan = await service.quote(t,store_code,items,allow_combos,context)
+    from coupon_split.price_hints import compare_stores, bigger_size
+    scope=selected_store.get('comparison_scope',{})
+    bound=(scope.get('addressId')==elements.get('addressId')) if elements.get('fulfillment')=='delivery' else bool(scope.get('keyword'))
+    nearby=[get_store_context(t,c) for c in selected_store.get('nearby_codes',[])] if bound and scope.get('fulfillment')==elements.get('fulfillment') else []
+    hint_calls=getattr(upstream,'network_calls',0)
+    hint_hits=getattr(upstream,'cache_hits',0)
+    await compare_stores(upstream,t,plan,nearby,elements)
+    await bigger_size(upstream,t,plan)
+    plan['hint_upstream_calls']=getattr(upstream,'network_calls',0)-hint_calls
+    plan['hint_cache_hits']=getattr(upstream,'cache_hits',0)-hint_hits
+    plan['upstream_calls']=plan.get('upstream_calls',0)+plan['hint_upstream_calls']
+    plan['cache_hits']=plan.get('cache_hits',0)+plan['hint_cache_hits']
+    plan['suggestion_price_calls']=plan.get('store_comparison_calls',0)+plan.get('size_comparison_calls',0)
+    plan['total_price_calls']=plan['price_calls']+plan['suggestion_price_calls']
     take=elements.get("takeWayCode")
     take_options=plan['plans'][0]['orders'][0]['takeWayList']
     if context["beType"]!=2:
@@ -536,7 +558,20 @@ async def get_options(plan_id: str, offset: int = 0, current_option_id: str = "0
     plan=service.load(plan_id,token())
     current=next(p for p in plan['plans'] if p['option_id'] == current_option_id)
     rows=[{"option_id":p["option_id"],"label":p["label"],"price":p["price"],"order_count":len(p["orders"]),"difference":option_difference(p,current)} for p in plan["plans"][max(0,offset):max(0,offset)+5]]
-    return result({"items":rows,"total":len(plan["plans"]),"next_offset":offset+5 if offset+5<len(plan["plans"]) else None,"price_calls":plan["price_calls"]},"候选均经官方核价；有限搜索，不保证全局最优。")
+    return result({"items":rows,"total":len(plan["plans"]),"next_offset":offset+5 if offset+5<len(plan["plans"]) else None,"price_calls":plan["price_calls"]},"这些买法都查过价格，还可能有其他优惠。")
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=False,openWorldHint=True))
+async def choose_price_offer(plan_id: str, kind: Literal['store','size'], session_id: str = '') -> CallToolResult:
+    """Only after the person accepts the store/size offer: re-quote at that store or with those official sizes. Never switch silently. Decline: place_orders with the existing option; card: place_orders with offers[].option_id. A re-quote may create an order in direct mode."""
+    plan=service.load(plan_id,token())
+    if plan['state']!='quoted':raise ValueError('这单已经处理过，请先查看订单。')
+    offer=plan.get(kind+'_offer')
+    if not offer:raise ValueError('这次没有这个选项，请重新报价。')
+    # Re-enter normal validation; saved comparison prices never authorize placement.
+    items=offer['items'] if kind=='size' else plan['requested_items']
+    store=offer['storeCode'] if kind=='store' else plan['storeCode']
+    return await quote_best(store_code=store,items=items,session_id=session_id,elements=plan.get('order_elements',{}))
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
@@ -553,7 +588,7 @@ async def get_evidence(plan_id: str, evidence_id: str) -> CallToolResult:
         if isinstance(v,dict):return {k:scrub(x) for k,x in v.items() if k not in {"couponId","couponCode","payId"}}
         if isinstance(v,list):return [scrub(x) for x in v]
         return v
-    return result({"evidence":scrub(value),"notice":"券标识已脱敏，重放请用本机证据库"},"券标识已脱敏，重放请用本机证据库。")
+    return result({"evidence":scrub(value),"notice":"已隐藏优惠券的私人信息。"},"已隐藏优惠券的私人信息。")
 
 
 async def prepare_place(t, plan, option_id, confirm_token, take_way=''):
@@ -700,6 +735,8 @@ def direct_result(plan, session_id=''):
 async def direct_after_quote(t, plan, sid, data):
     """quote_best in internal-tool mode: build the order(s) of the cheapest plan now, unless a fact stops it."""
     selected = plan['plans'][0]
+    from coupon_split.presentation import offer_rows
+    if offer_rows(plan):return result(data,f"这单 ¥{selected['price']/100:.2f}\n"+'\n'.join(v['text'] for v in offer_rows(plan)))
     if plan.get('elements_pending') or not plan.get('elements_validated'):
         return result(data, f"最低价 ¥{selected['price']/100:.2f}，还差：" + '、'.join({'takeWayCode': '堂食/外带'}.get(k, k) for k in plan.get('elements_pending', [])))
     if selected['price'] > max_order_cents():
@@ -716,7 +753,7 @@ async def place_direct(t, plan, option_id, confirm_token, take_way='', user_conf
     plan_id = plan['plan_id']
     if plan['state'] != 'quoted':return service.load(plan_id, t)  # replay: read back, never a second order
     import hmac
-    if not hmac.compare_digest(str(confirm_token), plan['confirm_token']):raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。')
+    if not hmac.compare_digest(str(confirm_token), plan['confirm_token']):raise ValueError('这份报价的确认信息已失效，请重新报价。')
     if time.time() - plan['created'] > onto.QUOTE_SECONDS:raise ValueError(f'报价已过期（超过 {onto.QUOTE_SECONDS//60} 分钟），价格和优惠可能已变；重新报价。')
     selected = next(p for p in plan['plans'] if p['option_id'] == option_id)
     if selected['price'] > max_order_cents():
@@ -736,7 +773,7 @@ async def place_direct(t, plan, option_id, confirm_token, take_way='', user_conf
         raise ValueError('用户表示不下单，订单没有创建。')
 
 
-PLACE_DIRECT_DESCRIPTION = '建单：得来速时 quote_best 返回还差堂食/外带，用户答了之后，把“堂食”或“外带”传给 take_way（服务端对上本店官方代码，不用你查代码）再建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。'
+PLACE_DIRECT_DESCRIPTION = '建单：得来速时 quote_best 返回还差堂食/外带，用户答了之后，把“堂食”或“外带”传给 take_way（服务端对上本店官方代码，不用你查代码）再建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。报价有 offers 时，用户选买卡用对应 option_id，拒绝优惠用原 option_id；接受换店或升杯用 choose_price_offer 重新报价。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。'
 
 
 @mcp.tool(description=None if HUMAN_AT_IMPORT else PLACE_DIRECT_DESCRIPTION,meta={"anthropic/requiresUserInteraction":True} if HUMAN_AT_IMPORT else {}, annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=True,idempotentHint=True,openWorldHint=True))
@@ -755,7 +792,7 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
         # M03: a wrong credential or an expired quote is refused on the very first call, before any confirmation page exists.
         import hmac
         if not hmac.compare_digest(str(confirm_token),plan['confirm_token']):
-            raise ValueError('确认凭证不匹配：这个 confirm_token 不是当前报价给的。')
+            raise ValueError('这份报价的确认信息已失效，请重新报价。')
         if time.time()-plan['created']>onto.QUOTE_SECONDS:
             raise ValueError(f'报价已过期（超过 {onto.QUOTE_SECONDS//60} 分钟），价格和优惠可能已变；确认凭证只对应当次报价。')
         failure=confirmations.take_failure(owner(t),plan_id)
@@ -1103,11 +1140,11 @@ def unknown_session(t, session_id, state):
     latest=carts.get(state.get('active_session',''))
     latest=latest if latest and latest['owner']==owner(t) else None
     data={'stage':'session_unknown','unknown_session_id':session_id,'session_created':False}
-    text=f'会话 {session_id} 不存在或已过期，没有新开会话，购物车没有变化。'
+    text='这次点餐已失效，购物车没有变化。'
     if latest:
         data['latest_session']=dict(session_facts(latest),session_id=state['active_session'])
-        text+=f'这个账户最近的有效会话是 {state["active_session"]}，已定：{json.dumps(session_facts(latest),ensure_ascii=False)}。不传 session_id 才会开始新的会话。'
-    else:text+='这个账户没有有效会话；不传 session_id 才会开始新的会话。'
+        text+='可以接着最近那份继续，或重新点一单。'
+    else:text+='请重新说想吃什么，开始新一单。'
     return result(data,text)
 
 
@@ -1115,9 +1152,9 @@ def session_missing(t, session_id):
     """The named session is not this account's: say so, and show the latest valid one (a mistyped id is one step from it)."""
     state=memory.read(owner(t))
     latest=carts.get(state.get('active_session',''))
-    text=f'会话 {session_id} 不存在、已过期或不属于此账户，购物车没有变化。'
+    text='这次点餐不存在、已失效或不属于当前账户，购物车没有变化。'
     if latest and latest['owner']==owner(t):
-        text+=f'这个账户最近的有效会话是 {state["active_session"]}，已定：{json.dumps(session_facts(latest),ensure_ascii=False)}。'
+        text+='可以接着最近那份继续，或重新点一单。'
     return ValueError(text)
 
 
@@ -1732,15 +1769,15 @@ async def setup_page(request):
         return JSONResponse({'message':'定位已开启：以后没说地点时，可以说“打开定位”。','storage':storage},headers={'Cache-Control':'no-store'})
     value=form.get('token',[''])[0].strip()
     try:
-        if not value:raise ValueError('Token 为空，请先从开放平台复制完整 Token')
+        if not value:raise ValueError('请先从麦当劳开放平台复制完整的 Token。')
         info=(await upstream.call(value,'query-my-account',{}))['data']
         storage=save_token(value); UPSTREAM_TOKEN=value
         name=next((str(info[k]) for k in ('nickname','nickName','accountName','userName','name') if info.get(k)),None) or '本人账户'
         return JSONResponse({'message':'已连接：'+name+' · 尾号 '+str(info['accountId'])[-4:],'account_name':name,'account_last4':str(info['accountId'])[-4:],'storage':storage},headers={'Cache-Control':'no-store'})
     except Exception as exc:
         message='麦当劳账户授权失效，请重新授权'
-        if not value:message='Token 为空，请先从开放平台复制完整 Token'
-        if '凭据管理器' in str(exc):message='Windows 凭据管理器不可用，请修复 keyring 后重试'
+        if not value:message='请先从麦当劳开放平台复制完整的 Token。'
+        if '凭据管理器' in str(exc):message='这台电脑暂时无法保存 Token，请稍后重试。'
         elif '连接失败' in str(exc):message='无法连接麦当劳服务，请稍后重试'
         return JSONResponse({'message':message+'；请打开 https://open.mcd.cn/mcp 重新授权'},status_code=400)
 
@@ -1880,7 +1917,7 @@ class Auth:
         if strict_local and (not supplied or not secrets.compare_digest(supplied,LOCAL_KEY)):
             return await JSONResponse({'error':'需要本机服务访问令牌'},401)(scope,receive,send)
         if not supplied or (supplied == LOCAL_KEY and not UPSTREAM_TOKEN and not strict_local):
-            return await JSONResponse({"error":"需要账户 Token；本机请配置 MCD_MCP_TOKEN"},401)(scope,receive,send)
+            return await JSONResponse({"error":"请先在授权页连接你的麦当劳账户。"},401)(scope,receive,send)
         if from_cookie and supplied not in carts:
             return await JSONResponse({'error':'点餐页已过期，请回到对话重新开始'},401)(scope,receive,send)
         current = UPSTREAM_TOKEN if secrets.compare_digest(supplied,LOCAL_KEY) else supplied
@@ -1911,7 +1948,7 @@ async def quote_status(request):
         status = service.quote_status(token(), data['store_code'], data['items'], data.get('allow_combos', True))
         return JSONResponse(status, headers={'Cache-Control': 'no-store'})
     except (KeyError, TypeError, ValueError):
-        return JSONResponse({'error': '报价参数无效'}, status_code=400)
+        return JSONResponse({'error': '这份餐品信息不完整，请重新选择。'}, status_code=400)
 
 
 async def sweep():

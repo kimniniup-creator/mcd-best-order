@@ -228,7 +228,7 @@ def order_summary(plan, selected, take_way_label=''):
     lines = []
     for order in selected['orders']:
         for row in order['productList']:
-            if row.get('productCode') == '521234':
+            if row.get('is_card') or row.get('productCode') == '521234':
                 lines.append({'name': '【卡费】' + row['productName'], 'quantity': row['quantity'], 'amount_yuan': f"{row['subtotal']/100:.2f}"})
             else:
                 lines.append({'name': row['productName'], 'quantity': row['quantity'], 'amount_yuan': f"{row['subtotal']/100:.2f}"})

@@ -26,10 +26,10 @@ def parse_cart(items):
             code,qty=str(item["productCode"]),str(item["quantity"])
         else:
             if ":" not in str(item):
-                raise ValueError("items 的每一项是 商品码:数量（如 901120:1）或 {productCode, quantity} 对象，不接受餐品名称；会话里餐品已定时可以只传 session_id")
+                raise ValueError("这份餐品信息不完整，请重新选择餐品和数量。")
             code, qty = item.rsplit(":", 1)
         if not code.isdigit() or not qty.isdigit() or not 1 <= int(qty) <= 20:
-            raise ValueError("商品格式应为 sku:数量，数量 1–20")
+            raise ValueError("请重新选择餐品，每项数量为 1–20 份。")
         result[canonical(code)] += int(qty)
     if not result or sum(result.values()) > 40:
         raise ValueError("餐品总数需在 1–40 份之间")
@@ -146,7 +146,7 @@ def delivery_fees(data):
             matches = [r for r in rows if fee_kind(r) == field]
             value = sum(r['subtotal'] for r in matches) if matches else (0 if field == 'packingPrice' else None)
         if type(value) is not int or value < 0:
-            raise ValueError('暂时无法确认'+('配送费' if field=='deliveryPrice' else '打包费')+'（上游没有返回有效值）')
+            raise ValueError('暂时无法确认'+('配送费' if field=='deliveryPrice' else '打包费')+'，请稍后重试')
         values[field] = value
     return values, rows
 
@@ -160,7 +160,7 @@ def validate_quantities(request, response):
             continue
         actual[i["productCode"]] += i["quantity"]
     # withOrder adds a membership product; only that extra line may be absent from requested items.
-    return all(actual[c] == n for c, n in expected.items()) and all(c in expected or (request.get("withOrder") and c == "521234" and n == 1) for c, n in actual.items())
+    return all(actual[c] == n for c, n in expected.items()) and all(c in expected or (request.get("withOrder") and c == ("514696" if request["withOrder"].get("cardId") else "521234") and n == 1) for c, n in actual.items())
 
 
 def select_ranked(plans):
@@ -270,13 +270,17 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     for comp in compositions:
         est = estimate(comp)
         add([dict(base, items=comp)], "套餐重组" if any(i.get("roundList") for i in comp) else "单点", est)
-        cards = [menu.get(i["productCode"], {}).get("withOrder") for i in comp]
+        cards = [menu.get(i["productCode"], {}).get("withOrder") or detail_map.get(i['productCode'],{}).get('withOrder') for i in comp]
         with_order = None
         for card in [c for c in cards if c]:
             membership=card.get('membershipCode') if isinstance(card,dict) else None
             spec=card.get('membershipSpecId',card.get('specId')) if isinstance(card,dict) else None
+            if isinstance(card,dict) and card.get('cardId') and card.get('cardType') is not None:
+                with_order = {k:card[k] for k in ('cardId','cardType')}
+                add([dict(base, items=comp, withOrder=with_order)], '先买卡再省', estimate(comp,True))
+                break
             if not membership or not spec:
-                excluded.append({'reason':'未取得完整会员卡参数，排除未核实的买卡方案'})
+                excluded.append({'reason':'暂时无法确认这张卡能否购买，先按不买卡比较。'})
                 continue
             with_order = {"membershipCode": membership, "membershipSpecId": spec}
             add([dict(base, items=comp, withOrder=with_order)], "先买卡再省", estimate(comp,True) + Decimal("9.90"))
@@ -329,7 +333,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
                 if not isinstance(data.get("price"), int) or data["price"] <= 0 or not validate_quantities(order, data):
                     raise ValueError("计价返回数量变化或金额无效，已丢弃")
                 fees, fee_rows = delivery_fees(data) if base.get('beType') == 2 else ({}, [])
-                evidence = {"evidence_id": uuid.uuid4().hex, "request": order, "response": response}
+                evidence = {"evidence_id": uuid.uuid4().hex, "request": copy.deepcopy(order), "response": copy.deepcopy(response)}
                 traces.append(evidence)
                 products = copy.deepcopy([r for r in data['productList'] if r not in fee_rows])
                 pending = [dict(i,remaining=i["quantity"]) for i in order["items"]]
@@ -379,11 +383,24 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
     for candidate in evaluated:
         for order in candidate['orders']:
             if order.get('packingPrice')==0 and baseline_packing>0:order['packing_waived']=True
+    for p in evaluated:
+        if not p['buys_card']:continue
+        card_rows=[r for o in p['orders'] for r in o['productList'] if r['productCode'] not in {i['productCode'] for i in o['request']['items']}]
+        for row in card_rows:row['is_card']=True
+        peer=min((q for q in evaluated if not q['buys_card']),key=lambda q:q['price'],default=None)
+        if peer and card_rows:
+            import math
+            fee=sum(r['subtotal'] for r in card_rows)
+            saving=peer['price']-(p['price']-fee)
+            extra=p['price']-peer['price']
+            p['card_offer']=dict(name='、'.join(r['productName'] for r in card_rows),fee=fee,extra=extra,later_saving=saving,payback_orders=math.ceil(fee/saving) if saving>0 else None)
+            validity=[str(r[k]) for r in card_rows for k in ('validityPeriod','validPeriod','validity','validDays','expireDate') if r.get(k) is not None]
+            if validity:p['card_offer']['validity']='、'.join(validity)
     ranked = select_ranked(evaluated)
     # Merge rows with the same visible contents, coupon, card and amount.
     unique_rows = {}
     for p in ranked:
-        p["label"] = " + ".join(f"{r['productName']} ×{r['quantity']}"+("（"+"、".join(c["name"]+"×"+str(c["quantity"]) for c in r["contents"])+"）" if r["contents"] else "") for o in p["orders"] for r in o["productList"] if r["productCode"] != "521234") + (" · 买卡" if p["buys_card"] else " · 不买卡") + "；".join(c for o in p["orders"] for c in o["coupons"])
+        p["label"] = " + ".join(f"{r['productName']} ×{r['quantity']}"+("（"+"、".join(c["name"]+"×"+str(c["quantity"]) for c in r["contents"])+"）" if r["contents"] else "") for o in p["orders"] for r in o["productList"] if not r.get('is_card')) + (" · 买卡" if p["buys_card"] else " · 不买卡") + "；".join(c for o in p["orders"] for c in o["coupons"])
         signature = composition_key([p["price"], [dict(request=o["request"], price=o["price"]) for o in p["orders"]]])
         unique_rows.setdefault(signature,p)
     ranked = list(unique_rows.values())
@@ -396,7 +413,7 @@ async def quote(upstream, token, store, items, allow_combos=True, context=None):
         if label not in strategies or p['price']<strategies[label]['price']:
             strategies[label]=dict(strategy=label,price=p['price'],difference=p['price']-ranked[0]['price'],evidence_ids=[o['evidence_id'] for o in p['orders']])
     comparison=dict(options=list(strategies.values()),selected_strategy=ranked[0]['strategy'],selected_price=ranked[0]['price'],
-        explanation='在已按官方计价核验且内容规格完全一致的候选中，选择最低总价；同价优先少付几笔。',
-        scope='有界搜索，不承诺穷尽所有买法；无法核价的候选未作价格结论。')
+        explanation='餐品和规格都一样，选其中总价最低的；同价时少付几笔。',
+        scope='只比较了这次能确认价格的买法，其他优惠可能更划算。')
     comparison['text']='｜'.join(p['strategy']+' ¥'+f"{p['price']/100:.2f}"+(f"（比所选多 ¥{p['difference']/100:.2f}）" if p['difference']>0 else '') for p in comparison['options'])+' → 选了'+comparison['selected_strategy']+'，'+comparison['explanation']
     return {"comparison_summary":comparison,"baseline": baseline["price"], "baseline_evidence_id": baseline["orders"][0]["evidence_id"], "plans": ranked, "no_card": next((p for p in ranked if not p["buys_card"]), None), "compared": len(ranked), "evaluated":len(evaluated), "rejected": len(rejected), "exclusions":excluded+rejected, "price_calls": len(cache), "evidence": traces, "storeCode": store, "cart": dict(need), "names":names, "search_limit": MAX_CALLS, "elapsed_seconds":round(time.monotonic()-started,3)}

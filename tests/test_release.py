@@ -189,4 +189,4 @@ async def test_incomplete_membership_does_not_abort_regular_quote():
             raise AssertionError(name)
     result=await quote(Pricing(),'fixture','fixture-store',[{'productCode':'100','quantity':1}],True)
     assert result['baseline']==100 and result['plans'][0]['price']==100
-    assert any('会员卡参数' in entry['reason'] for entry in result['exclusions'])
+    assert any('暂时无法确认这张卡能否购买' in entry['reason'] for entry in result['exclusions'])

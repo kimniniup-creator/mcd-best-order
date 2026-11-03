@@ -311,7 +311,7 @@ def _quoted(words):
 def confirm_rule_text():
     """The one sentence every document and tool description uses for what counts as a confirmation (generated from the whitelist)."""
     return ('只有这四种标准确认句才算确认：%s（后面可带金额，如“确认下单 ¥10.00”，超过 ¥200 时必须带金额；金额必须是规范写法：可选一个货币符号 ¥ ￥ RMB CNY，整数加最多两位小数，可选一个单位元或块，不能有千分位逗号、多个符号或多个小数点，格式不对不算确认，改在确认页点确认下单；前面可带%s，后面可带%s），'
-            '其余话一律不算确认，服务端只提示用户回复“确认下单”。') % (
+            '其他说法不算确认，请回复“确认下单”。') % (
         _quoted(CONFIRM_CORES), _quoted(CONFIRM_PREFIXES[:-2] + ('OK', 'okay')), _quoted(CONFIRM_SUFFIXES))
 
 

@@ -70,9 +70,9 @@ def business_message(code, message):
     if str(code) == '60006':
         return '这个餐品现在无法下单：可能已售罄，也可能是套餐选配数量不符，请重新选配或换一道餐品。麦当劳原话：' + (text or '商品已售罄或不可售')
     if str(code) == '600012':
-        return '麦当劳拒绝了本次计价或下单，请按原提示检查后重新报价。麦当劳原话：' + text
+        return '这次没能查价或下单，请按麦当劳提示调整后重试。麦当劳原话：' + text
     if str(code) == '600010':
-        return '麦当劳拒绝了缺失或无效的必填参数，请检查订单信息后重新报价。麦当劳原话：' + text
+        return '订单信息不完整或有误，请重新选择后再查价格。麦当劳原话：' + text
     if any(word in text for word in ('不可售', '停售', '售罄', '未售', '不支持外送')):
         return '所选餐品暂不可售，请换一道餐品或改为到店自取。麦当劳原话：' + text
     return ('麦当劳提示：' + text) if text else '麦当劳暂时无法处理这次请求，请稍后重试'
@@ -160,7 +160,7 @@ class Upstream:
                 raise ValueError("新地址尚未确认")
             self.confirmed_addresses.remove(signature)
         elif name not in READ_ONLY and not (self.allow_real and name in {"create-order", "cancel-order"}):
-            raise ValueError("上游写操作已关闭")
+            raise ValueError("暂未开启下单，订单没有创建。")
         key = hashlib.sha256(token.encode()).hexdigest()
         cache_key = (key, name, json.dumps(args, sort_keys=True))
         # Coupon availability must be fresh after real creation/cancellation.

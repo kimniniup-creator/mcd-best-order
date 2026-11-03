@@ -952,7 +952,7 @@
   },
   {
     "name": "quote_best",
-    "description": "向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。总价超过单次上限、或得来速还差堂食/外带时不建单，返回报价和缺的事实；到店自取默认外带，不用问。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。",
+    "description": "向麦当劳核价，算出最低价方案（可以拆成多单），并直接建单；返回的 payment_links 是每单的付款入口，付款即确认，不付款的单由麦当劳超时自动取消。返回 offers 时先问用户是否买卡、换店或同价升杯，不建单；接受换店/升杯用 choose_price_offer，买卡或拒绝优惠用 place_orders。总价超过单次上限、或得来速还差堂食/外带时也不建单，返回报价和缺的事实；到店自取默认外带，不用问。同一个会话里已有在途订单时再调用，返回那些订单，不会重复建单。items、store_code 可以省略，改传 session_id 就用该会话里已确定的餐品和门店。",
     "inputSchema": {
       "$defs": {
         "OrderElements": {
@@ -1186,6 +1186,43 @@
     }
   },
   {
+    "name": "choose_price_offer",
+    "description": "Only after the person accepts the store/size offer: re-quote at that store or with those official sizes. Never switch silently. Decline: place_orders with the existing option; card: place_orders with offers[].option_id. A re-quote may create an order in direct mode.",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "store",
+            "size"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "kind"
+      ],
+      "title": "choose_price_offerArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
     "name": "get_evidence",
     "description": "按编号读取当前账户的脱敏逐笔计价证据；券标识重放须用本机私有证据库。",
     "inputSchema": {
@@ -1215,7 +1252,7 @@
   },
   {
     "name": "place_orders",
-    "description": "建单：得来速时 quote_best 返回还差堂食/外带，用户答了之后，把“堂食”或“外带”传给 take_way（服务端对上本店官方代码，不用你查代码）再建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。",
+    "description": "建单：得来速时 quote_best 返回还差堂食/外带，用户答了之后，把“堂食”或“外带”传给 take_way（服务端对上本店官方代码，不用你查代码）再建单；或总价超过单次上限（over_limit）时，用户回复“确认下单 ¥金额”后，把这句原话交给 user_confirmation。报价有 offers 时，用户选买卡用对应 option_id，拒绝优惠用原 option_id；接受换店或升杯用 choose_price_offer 重新报价。其余情况 quote_best 已经建单，不用调用。同一报价只建一次。",
     "inputSchema": {
       "properties": {
         "plan_id": {
