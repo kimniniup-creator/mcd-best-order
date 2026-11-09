@@ -49,6 +49,10 @@ credential = contextvars.ContextVar("credential", default="")
 SIMULATION_GATE = False  # tests only: also demand the human confirmation in simulation
 upstream = Upstream(allow_real=os.environ.get("ALLOW_REAL_ORDERS", "true").lower() == "true" and os.environ.get("COUPON_SPLIT_SIMULATE", "false").lower() != "true")
 service = Service(upstream, str(runtime / "plans.sqlite3"))
+from coupon_split import feedback as fb
+feedback_store = fb.FeedbackStore(str(runtime / "feedback.sqlite3"))
+from coupon_split import survey as sv
+survey_store = sv.SurveyStore(str(runtime / "feedback.sqlite3"))
 from coupon_split.humanconfirm import ConfirmationStore
 from coupon_split.confirmation import confirm_rule_text
 
@@ -713,16 +717,29 @@ def payment_pages(plan):
     return staticpay.write_pages(plan, runtime / 'payments')
 
 
+FEEDBACK_HINT = '这单满意吗？回 👍 或 👎，也可以说说哪里不好'
+
+
 def direct_view(plan, session_id=''):
     """An order waiting for payment in internal-tool mode: facts the reply needs, and the shortest text that carries them."""
     pages = payment_pages(plan)
     total = sum(o['price'] for o in plan['orders'])
     links = [dict(n=p['n'], amount_yuan=f"{p['amount_cents']/100:.2f}", url=p['mobile_url'], file=p['path']) for p in pages]  # the pay-before time is on the page, not in the facts
-    lines = [f"合计 ¥{total/100:.2f}"] if len(links) > 1 else []
+    from coupon_split.presentation import savings_facts
+    saved = savings_facts(plan) or {}
+    lines = [saved['savings_line']] if saved else []
+    lines += [f"合计 ¥{total/100:.2f}"] if len(links) > 1 else []
     lines += [f"¥{l['amount_yuan']} 付款：{l['url'] or '见二维码页'}　电脑扫码：{l['file']}" for l in links]
+    compared = plan.get('price_compare') or None
+    if compared:lines.append(compared['line'])  # R21: the comparison result, after the payment links and before the feedback line
+    question = survey_store.next_question(plan['owner'], plan['plan_id']) if plan.get('owner') else None
+    lines.append(question['text'] if question else FEEDBACK_HINT)  # the survey question takes the 👍/👎 line, never both
     text = '\n'.join(lines)
     data = dict(plan_id=plan['plan_id'], state=plan['state'], order_count=len(links), total_yuan=f"{total/100:.2f}", payment_links=links,
-                simulated=bool(plan.get('dry_run')), reply_format=onto.MODEL['reply_format']['after_order'], links={}, stage='placed')
+                simulated=bool(plan.get('dry_run')), reply_format=onto.MODEL['reply_format']['after_order'], links={}, stage='placed', **saved)
+    if question:data['survey_question'] = question
+    else:data['feedback_hint'] = FEEDBACK_HINT
+    if compared:data.update(compare_line=compared['line'], price_compare={k: v for k, v in compared.items() if k != 'line'})
     if session_id:data['session_id'] = session_id
     return result(data, text)
 
@@ -742,8 +759,30 @@ async def direct_after_quote(t, plan, sid, data):
     if selected['price'] > max_order_cents():
         data.update(over_limit=dict(limit_yuan=f"{max_order_cents()/100:.2f}", price_yuan=f"{selected['price']/100:.2f}"))
         return result(data, f"总价 ¥{selected['price']/100:.2f} 超过单次上限 ¥{max_order_cents()/100:.2f}，没有建单。")
-    placed = await place_direct(t, plan, selected['option_id'], plan['confirm_token'])
+    placed = await placed_and_compared(t, place_direct(t, plan, selected['option_id'], plan['confirm_token']), selected)
     return direct_result(placed, sid)
+
+
+async def placed_and_compared(t, placing, selected):
+    """Place the order(s) while Pinduoduo is searched for the same item (PRD R21). The search never fails or delays an order
+    by more than pdd.TIMEOUT after it is placed; its result is kept on the plan so later payment checks reuse it."""
+    from coupon_split import pdd
+    search = asyncio.ensure_future(pdd.compare({'selected': selected}))
+    try:
+        placed = await placing
+    except BaseException:
+        search.cancel()
+        raise
+    try:
+        compared = await asyncio.wait_for(search, pdd.TIMEOUT)
+    except Exception:  # timeout or anything unexpected: no comparison line, the order stands
+        compared = None
+    if compared and placed.get('state') == 'awaiting_payment' and placed.get('orders'):
+        placed = service.load(placed['plan_id'], t)  # re-read: a withdrawal may have landed while the search finished
+        if placed.get('state') == 'awaiting_payment':
+            placed['price_compare'] = compared
+            service.save(placed)
+    return placed
 
 
 async def place_direct(t, plan, option_id, confirm_token, take_way='', user_confirmation=''):
@@ -786,7 +825,7 @@ async def place_orders(plan_id: str, confirm_token: str, user_confirmation: Anno
     if cf.is_negative(user_confirmation):
         return await withdraw_by_words(t,plan,option_id)
     if not human_confirm_enabled():
-        placed=await place_direct(t,plan,option_id,confirm_token,take_way,user_confirmation)
+        placed=await placed_and_compared(t, place_direct(t,plan,option_id,confirm_token,take_way,user_confirmation),selected)
         return direct_result(placed)
     if plan['state']=='quoted':
         # M03: a wrong credential or an expired quote is refused on the very first call, before any confirmation page exists.
@@ -1017,6 +1056,42 @@ async def list_coupons(session_id: Annotated[str, Field(description='同一对�
     data={'scope':'wallet','coupons':rows,'count':total,'pages':pages,'usable_now':sum(1 for c in rows if c['usable_now'])}
     if session_id:data['session_id']=session_id
     return result(data,cv.wallet_text(rows,total))
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=True))
+async def send_feedback(plan_id: str, rating: Literal['up','down'], note: str = '') -> CallToolResult:
+    """记下用户对这一单的反馈。用户回 👍、满意、好评传 up；回 👎、不满意、差评或说哪里不好传 down，note 传用户原话里的意见（可省略）。
+    同一单再评一次会覆盖。只记评分、金额和意见，不记订单号、地址、付款链接。配置了飞书群机器人时同时发到群里。"""
+    t=token()
+    plan=service.load(plan_id,t)
+    row=feedback_store.record(plan,owner(t),rating,note)
+    sent=await fb.post_to_lark(row)
+    return result(dict(plan_id=plan_id,rating=rating,recorded=True,sent_to_lark=sent,stage='feedback'),'收到，谢谢。')
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=False))
+async def order_stats(days: int = 30) -> CallToolResult:
+    """统计这台电脑上近 days 天的点餐：报价、建单、付款和没付就取消的单数，共省多少、平均每单省多少，拆单和买卡的单数，👍/👎 和最近的意见。只读。"""
+    days=max(1,min(int(days),365))
+    since=time.time()-days*86400
+    rows=[json.loads(b) for (b,) in service.db.execute("SELECT body FROM plans WHERE owner=?",(owner(token()),))]
+    stats=fb.order_stats(rows,since,feedback_store)
+    stats['survey']=survey_store.distribution(since)
+    stats['survey_text']=sv.distribution_text(stats['survey'])
+    return result(dict(stats,days=days,stage='stats'),fb.stats_text(stats,days))
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=True))
+async def answer_survey(question_id: str, choice: str, note: str = '') -> CallToolResult:
+    """记下用户对建单后那道产品形态题（survey_question）的回答。question_id 用 survey_question.question_id。
+    choice：形态题传 1 会用 / 2 看情况 / 3 不会；总题（favorite）传形态编号 1–9；用户说跳过传 skip，说别再问了传 stop，
+    只说了想法没选数字传 note_only（note 必填）。note 传用户原话里的意见（可省略）。
+    用户表达不要这单、取消、撤回时是撤回，调用 withdraw_order，不调用本工具。配置了飞书群机器人时同时发到群里。"""
+    row=survey_store.answer(owner(token()),question_id,choice,note)
+    message=sv.lark_message(row)
+    sent=await fb.post_to_lark(row,message) if message else False
+    text='好的，以后不再问了。' if choice=='stop' else '收到，谢谢。'
+    return result(dict(question_id=question_id,choice=choice,recorded=True,sent_to_lark=sent,stage='feedback'),text)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False,idempotentHint=True,openWorldHint=True))

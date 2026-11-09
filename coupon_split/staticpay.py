@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from coupon_split.presentation import public
+from coupon_split.presentation import public, savings_facts
 from coupon_split.service import deadline
 
 CSS = ("*{box-sizing:border-box}body{margin:0;background:#F7F2E8;color:#1A1813;font:16px/1.6 system-ui,sans-serif}"
@@ -19,7 +19,10 @@ CSS = ("*{box-sizing:border-box}body{margin:0;background:#F7F2E8;color:#1A1813;f
        ".qr{background:#fff;padding:10px;width:260px;max-width:100%;margin:12px auto}.qr svg{display:block;width:100%;height:auto}"
        ".app{display:block;background:#C8430E;color:#fff;text-decoration:none;border-radius:12px;min-height:48px;padding:12px;margin:12px 0 0;font-weight:650}"
        ".items{font-size:14px;color:#615B51;margin:8px 0}.due{font-weight:650}.note{font-size:14px;color:#615B51}"
-       ".sim{background:#F6E3C8;border-radius:12px;padding:8px 12px;margin:0 0 12px;font-weight:650}")
+       ".sim{background:#F6E3C8;border-radius:12px;padding:8px 12px;margin:0 0 12px;font-weight:650}"
+       ".saved{color:#1F6B3A;font-weight:650;margin:0 0 14px}"
+       ".compare{background:#F7F2E8;border-top:1px dashed #D9D1C2;margin:16px 0 0;padding:14px 4px 0;font-size:15px}"
+       ".compare p{margin:0 0 4px}.compare .title{font-size:14px;color:#615B51}.compare a{color:#1A1813}")
 
 
 def clock(value):
@@ -44,11 +47,25 @@ def render(plan, index):
     pay = (f'<a class="app" href="{e(f["mobile_url"])}">打开麦当劳 App 付款</a><div class="qr">{f["qr_svg"]}</div>'
            '<p class="note">电脑上用手机麦当劳 App 或微信扫一扫</p>') if f['mobile_url'] else '<p class="note">没有拿到付款链接，请在麦当劳 App 或微信小程序「我的订单」里付款。</p>'
     title = f'¥{f["amount_cents"] / 100:.2f}'
+    saved = savings_facts(plan)
+    saved = f'<p class="saved">{e(saved["savings_line"])}</p>' if saved else ''
+    compare = compare_block(plan.get('price_compare'))
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<meta name="referrer" content="no-referrer"><title>付款 {title}</title><style>{CSS}</style></head><body><main>'
             f'<span class="tag">最优下单 · 付款{f"（第 {index + 1}/{count} 笔）" if count > 1 else ""}</span>'
-            f'<h1>{title}</h1><p class="sub">{e(plan.get("storeName") or "")}</p><div class="card">{sim}<p class="items">{items}</p>'
-            f'{pay}<p class="due">{f["due"]} 前付款</p><p class="note">不付款，麦当劳到时间会自动取消。不想要了，回对话里说一声。</p></div></main></body></html>')
+            f'<h1>{title}</h1><p class="sub">{e(plan.get("storeName") or "")}</p>{saved}<div class="card">{sim}<p class="items">{items}</p>'
+            f'{pay}<p class="due">{f["due"]} 前付款</p><p class="note">不付款，麦当劳到时间会自动取消。不想要了，回对话里说一声。</p></div>{compare}</main></body></html>')
+
+
+def compare_block(c):
+    """PRD R21: the Pinduoduo comparison under the payment card; no green, that colour is only for money actually saved."""
+    if not c:return ''
+    e = html.escape
+    if c['kind'] == 'mcd_cheaper':return f'<section class="compare"><p>{e(c["line"])}</p></section>'
+    from coupon_split.pdd import RISK
+    return (f'<section class="compare"><p>拼多多同款 ¥{e(c["pdd_yuan"])} 起，比这单低 ¥{e(c["cheaper_yuan"])}</p>'
+            f'<p class="title">{e(c.get("title") or "")}</p><p class="note">{RISK}</p>'
+            f'<p><a href="{e(c["url"])}" rel="noreferrer noopener" target="_blank">去拼多多看看</a></p></section>')
 
 
 def write_pages(plan, directory):

@@ -58,7 +58,7 @@ DIRECT_INSTRUCTIONS = '''麦当劳点餐（内部工具）。你（宿主 Agent�
 - 回合什么时候可以结束：你在问用户一个问题；或付款链接已经给了用户；或订单已经结束。state 是 items_ready 时用户还没拿到价格，这时结束回合等于没有回复用户。
 
 工具
-mcd_start 起步或修改；resolve_order 按槽位传入你的理解；find_store、get_menu、get_item_detail、propose_cart 查店配餐；list_coupons 列出这家店能用的券或卡包（只读，用户问“有什么券”时用）；quote_best 核价并建单；place_orders 补堂食/外带或超限确认后建单；pay_card、wait_payment 查付款；withdraw_order 撤回。
+mcd_start 起步或修改；resolve_order 按槽位传入你的理解；find_store、get_menu、get_item_detail、propose_cart 查店配餐；list_coupons 列出这家店能用的券或卡包（只读，用户问“有什么券”时用）；quote_best 核价并建单；place_orders 补堂食/外带或超限确认后建单；pay_card、wait_payment 查付款；withdraw_order 撤回；send_feedback 记下用户对这一单的 👍/👎 和意见；answer_survey 记下建单后那道产品形态题的回答；order_stats 统计近期报价、付款和省了多少（用户问“用了多少次”“省了多少”时用）。
 '''
 
 

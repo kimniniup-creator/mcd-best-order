@@ -32,6 +32,30 @@ def money(value):
     return f"¥{value/100:.2f}"
 
 
+def min_savings_cents():
+    """Savings below this are not worth a line in the reply (COUPON_SPLIT_MIN_SAVINGS_YUAN, default 1 yuan)."""
+    import os
+    try:
+        yuan = float(os.environ.get('COUPON_SPLIT_MIN_SAVINGS_YUAN', 1))
+    except ValueError:
+        yuan = 1
+    return int(round(yuan * 100))
+
+
+def savings_facts(plan):
+    """What a created plan saved against the as-is baseline, all from quote_best's own figures; None when there is nothing to show.
+
+    The line is skipped when the created orders do not add up to the quoted price, so the reply never mixes two sets of numbers."""
+    selected = plan.get('selected') or {}
+    if 'baseline' not in plan or 'savings' not in selected:return None
+    total = sum(o['price'] for o in plan.get('orders', []))
+    if total != selected['price'] or selected['savings'] < max(min_savings_cents(), 1):return None
+    fee = sum(r['subtotal'] for o in selected['orders'] for r in o['productList'] if r.get('is_card') or r['productCode'] == '521234')
+    line = f"照原样 {money(plan['baseline'])}，这单 {money(total)}" + (f"（含卡费 {money(fee)}）" if fee else '') + f"，省 {money(selected['savings'])}"
+    return dict(baseline_yuan=f"{plan['baseline']/100:.2f}", save_yuan=f"{selected['savings']/100:.2f}",
+                card_fee_yuan=f"{fee/100:.2f}" if fee else None, savings_line=line)
+
+
 def offer_rows(plan):
     rows=[]
     seen=set()

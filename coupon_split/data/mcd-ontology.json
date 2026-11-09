@@ -86,7 +86,7 @@
       "placing": {"about": "正在创建订单", "actions": ["wait_payment", "withdraw_order"]},
       "verifying": {"about": "正在核对下单结果", "actions": ["wait_payment", "withdraw_order"]},
       "rollback_pending": {"about": "撤回尚未成功，系统在重试", "actions": ["wait_payment", "withdraw_order"]},
-      "awaiting_payment": {"about": "订单已建，等用户本人付款", "replyRequires": ["payment_url", "payment_links"], "actions": ["pay_card", "wait_payment", "withdraw_order"]},
+      "awaiting_payment": {"about": "订单已建，等用户本人付款", "replyRequires": ["savings_line", "payment_url", "payment_links", "compare_line", "survey_question"], "actions": ["pay_card", "wait_payment", "withdraw_order"]},
       "cancelled": {"about": "已撤回或放弃", "terminal": true, "actions": ["mcd_start", "resolve_order"]},
       "paid": {"about": "已付款", "terminal": true, "actions": ["mcd_start", "resolve_order"]},
       "place_failed": {"about": "下单没有成功", "terminal": true, "actions": ["mcd_start", "resolve_order", "withdraw_order"]},
@@ -99,7 +99,7 @@
     "reply_format": {
       "about": "给用户的回复的格式约束（不是预填文案：服务端不替 Agent 写句子，只给事实字段和这些规则）。默认的内部工具模式下，用户说想吃什么，只想要价格和付款入口。",
       "ask": "问问题时只问一个问题，一句话，不解释原因，可给选项，如“外送还是自取？”“送哪个地址：A / B”。到店自取不问堂食还是外带（默认外带，用户自己说堂食才用堂食）。取餐方式没说时先只问“外送还是自取？”；外送用账户已保存的地址（只有一个就直接用，多个才问）；没有匹配地址时发新增地址页链接并立即用 wait_address 等待保存；自取才问城市和地标。",
-      "after_order": "下单后每单一行“¥金额 付款链接”（链接取 payment_links[].url，电脑扫码用 payment_links[].file）；拆成多单时第一行写总价 total_yuan。不解释为什么拆单，不罗列优惠明细，不重复餐品，不讲流程；用户追问时再说。",
+      "after_order": "下单后每单一行“¥金额 付款链接”（链接取 payment_links[].url，电脑扫码用 payment_links[].file）；拆成多单时先写总价 total_yuan。返回里有 savings_line 时把它原样写在最前面一行（服务端按 quote_best 的原样价和实付算好，只在省得够多时给；没有就不写，不自己算省了多少）。付款链接后面先原样写 compare_line 一行（服务端比过拼多多同款后给的结果；没有就不写，不自己比价），再原样写 feedback_hint 一行；返回里有 survey_question 时（这时没有 feedback_hint）改为原样写 survey_question.text，用户回数字、跳过、别再问了或只说想法时调用 answer_survey(question_id, choice, note)，用户要撤回时仍调用 withdraw_order；用户回 👍/👎 或说哪里不好时调用 send_feedback(plan_id, rating, note)，回一句“收到，谢谢。”即可。不解释为什么拆单，不罗列优惠明细，不重复餐品，不讲流程；用户追问时再说。",
       "no_narration": "调用工具前后不输出过程说明；用户能看到的只有问题本身，或者最终的金额加付款链接。",
       "never": ["过程说明（我会查…、正在获取…、官方代码是…我用这个重新建单）", "优惠原因", "拆单理由", "流程说明", "门店、地址、餐品的复述", "付款截止时间和不付款的后果（付款页上有）", "确认或授权的叙述（付款本身就是确认）"]
     },

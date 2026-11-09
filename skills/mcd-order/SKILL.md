@@ -30,7 +30,9 @@ description: 麦当劳点餐入口。用户想吃、点、外送麦当劳，或�
 ## 回复格式（约束，不是文案）
 
 - 调用工具前后不输出过程说明；用户能看到的只有问题本身，或者最终的金额加付款链接。（过程说明例如“我会使用…查找”“正在获取付款链接”“官方代码是…我用这个重新建单”。）
-- 下单后每单一行：`¥金额 付款链接`（`payment_links[].url`；电脑扫码给 `payment_links[].file`）。拆成多单时第一行写总价 `total_yuan`。
+- 下单后每单一行：`¥金额 付款链接`（`payment_links[].url`；电脑扫码给 `payment_links[].file`）。拆成多单时先写总价 `total_yuan`。返回里有 `savings_line` 时原样写在最前面一行（如“照原样 ¥117.50，这单 ¥59.80，省 ¥57.70”）；没有就不写，不自己算省了多少。付款链接后面先原样写 `compare_line` 一行（拼多多比价结果，如“比过拼多多 12 件同款，这单更便宜”；没有就不写），再原样写 `feedback_hint` 一行；返回里有 `survey_question` 时（这时没有 `feedback_hint`）改为原样写 `survey_question.text`。
+- 用户回答形态题（回 1/2/3、总题回 1–9、说“跳过”“别再问了”或只说想法）：`answer_survey(question_id, choice, note)`，`choice` 依次传数字、`skip`、`stop`、`note_only`。用户要撤回这单时仍然 `withdraw_order`，不当作回答。
+- 用户回 👍/👎、满意/不满意或说哪里不好：`send_feedback(plan_id, rating="up"|"down", note=用户的意见)`，回“收到，谢谢。”。用户问“用了多少次”“一共省了多少”：`order_stats(days)`。
 - 不解释为什么拆单，不罗列优惠明细，不重复餐品，不讲流程；用户追问时再说。
 - 价格只来自 `quote_best`，不自行编价或承诺最低。
 - 用户问“有什么券”“这家店能用什么券”：`list_coupons(session_id)`。门店已定时列出这家店按当前取餐方式能用的券，没定时列出卡包；`scope="wallet"` 看卡包全部。只读，不领券、不建单。券能否让这单更便宜只看 `quote_best`。

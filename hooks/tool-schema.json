@@ -1684,6 +1684,97 @@
     }
   },
   {
+    "name": "send_feedback",
+    "description": "记下用户对这一单的反馈。用户回 👍、满意、好评传 up；回 👎、不满意、差评或说哪里不好传 down，note 传用户原话里的意见（可省略）。\n同一单再评一次会覆盖。只记评分、金额和意见，不记订单号、地址、付款链接。配置了飞书群机器人时同时发到群里。",
+    "inputSchema": {
+      "properties": {
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "rating": {
+          "enum": [
+            "up",
+            "down"
+          ],
+          "title": "Rating",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "rating"
+      ],
+      "title": "send_feedbackArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "order_stats",
+    "description": "统计这台电脑上近 days 天的点餐：报价、建单、付款和没付就取消的单数，共省多少、平均每单省多少，拆单和买卡的单数，👍/👎 和最近的意见。只读。",
+    "inputSchema": {
+      "properties": {
+        "days": {
+          "default": 30,
+          "title": "Days",
+          "type": "integer"
+        }
+      },
+      "title": "order_statsArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "answer_survey",
+    "description": "记下用户对建单后那道产品形态题（survey_question）的回答。question_id 用 survey_question.question_id。\nchoice：形态题传 1 会用 / 2 看情况 / 3 不会；总题（favorite）传形态编号 1–9；用户说跳过传 skip，说别再问了传 stop，\n只说了想法没选数字传 note_only（note 必填）。note 传用户原话里的意见（可省略）。\n用户表达不要这单、取消、撤回时是撤回，调用 withdraw_order，不调用本工具。配置了飞书群机器人时同时发到群里。",
+    "inputSchema": {
+      "properties": {
+        "question_id": {
+          "title": "Question Id",
+          "type": "string"
+        },
+        "choice": {
+          "title": "Choice",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "choice"
+      ],
+      "title": "answer_surveyArguments",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
     "name": "account_info",
     "description": "读取本人账户，仅返回账户后四位与本机别名，不返回完整账户号。",
     "inputSchema": {

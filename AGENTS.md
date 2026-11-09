@@ -7,7 +7,7 @@
 2. 已装 uv 时运行下面命令，把 `<host>` 换为表中的名字。先预览；用户的“帮我安装”授权包含对应 MCP 注册，可核对路径后添加 `--apply`。没有安装授权时只预览。不要改模型、全局审批或其他 MCP。
 
    ```sh
-   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.5/coupon_split-0.9.5-py3-none-any.whl coupon-split setup --host <host>
+   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.6/coupon_split-0.9.6-py3-none-any.whl coupon-split setup --host <host>
    ```
 
 3. 默认使用文档支持的项目配置；只提供全局配置的宿主会显示实际目标。隔离环境用 `--project <workspace> --home <isolated-home>` 或 `--config <actual-config-path>`。保留已有条目；写入前安装器会保留原文件备份。不要把 Token 写到仓库或聊天。
@@ -18,9 +18,25 @@
 
 开发本仓库时：不读取或提交个人凭据，不真实下单。运行 `pytest`；配置变更须验证预览不写、先备份、保留其他条目和对称卸载。不要把上面的安装自检当成真实付款验收。
 
+遇到新功能时，按 PRD → spec → 测试文档 → 实现 → 测试的顺序进行，前三步是文档，写完才动代码：
+1. PRD（做什么、为什么）：在 [docs/01-PRD.md](docs/01-PRD.md) 的功能需求、业务规则、不做什么、第 8 节验收标准里补上这个功能，并加一条变更记录。PRD 由产品拍板，Agent 只起草，用户确认后才算定稿。
+2. spec（怎么做）：以定稿的 PRD 和对应任务单为依据，写在 `docs/specs/<功能>.md`，写清改哪些模块、工具参数和返回怎么变、对安全不变量的影响、边界情况。和用户对齐后进入下一步。
+3. 测试文档（测什么、怎么判定）：以 PRD 和 spec 为依据，写在 `docs/tests/<功能>.md`，和 spec 同名。和用户对齐后才开始实现。分三类：
+   - 自动化用例：每条 PRD 规则和 spec 里的每个边界情况至少对应一个用例，失败情况也要列。
+   - 手工验收：自动化覆盖不了的（真实宿主、真实飞书、真实下单等），写明谁来测、怎么判定通过。
+   - 不测的：哪些不测，为什么。
+4. 实现：按 spec 写代码，按测试文档写测试用例。发现 PRD 没覆盖或有冲突，先停下来提出，不自行改 PRD；spec 或测试文档要改的，先改文档再改代码。
+5. 测试：跑全量 `pytest`，提 PR 前把测试文档的计划改成实际结果。自动化用例写明对应的测试函数和是否通过；手工验收写明结果，或写明还没做；开发中新增的计划外用例单独列出，并写明原因。最后写上全量 `pytest` 的通过 / 失败数，失败的写明原因和是否与本功能有关。
+
 ## 0.9.0 内部工具模式
 
 默认不再要人工确认：说想吃什么，`quote_best` 算最低价并直接建单，回复只给总价和每单付款链接，付款即确认；付款页是写在本机状态目录的静态 HTML。`COUPON_SPLIT_HUMAN_CONFIRM=true` 恢复确认页和上面的确认规则，`COUPON_SPLIT_MAX_ORDER_YUAN` 调整单次总额上限（默认 300 元）。
+
+## 0.9.6 省钱可见、反馈、统计与拼多多比价
+
+建单后回复和付款页最前面一行是服务端给的 `savings_line`（“照原样 ¥x，这单 ¥y，省 ¥z”，买卡写含卡费），原样照抄，不自己算；低于 `COUPON_SPLIT_MIN_SAVINGS_YUAN`（默认 1 元）时没有这一行。付款链接后面原样写 `feedback_hint`；用户回 👍/👎 或说哪里不好时调用 `send_feedback(plan_id, rating, note)`，`COUPON_SPLIT_FEEDBACK_WEBHOOK` 配了飞书群机器人时同时发群。用户问用了多少次、省了多少时调用只读的 `order_stats(days)`。返回里有 `survey_question` 时（只在设置了 `COUPON_SPLIT_SURVEY_DOC_URL` 时出现，这时没有 `feedback_hint`），原样写它的 `text`；用户回答时调用 `answer_survey(question_id, choice, note)`，撤回仍走 `withdraw_order`。依据 PRD R20、`docs/specs/form-survey.md`。
+
+建单时服务端同时去拼多多（多多进宝）搜同款，付款链接后面原样写 `compare_line` 一行：这单更便宜时是“比过拼多多 N 件同款，这单更便宜”，拼多多更低时给价格、风险提示和链接。没有就不写，不自己比价。只在本机有 `PDD_CLIENT_ID`、`PDD_CLIENT_SECRET`、`PDD_PID`（环境变量或 `~/.pdd/.env`）时比，`COUPON_SPLIT_PDD_COMPARE=false` 关闭。依据 PRD R21、`docs/specs/pdd-compare.md`。
 
 ## 0.9.5 回复再砍短
 
