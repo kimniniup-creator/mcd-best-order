@@ -124,6 +124,12 @@ async def link(goods_sign, search_id, cred):
     return next((r.get('mobile_short_url') or r.get('short_url') or r.get('url') for r in rows if r.get('mobile_short_url') or r.get('short_url') or r.get('url')), '')
 
 
+def pdd_cheaper_head(count, pdd_yuan, cheaper_yuan):
+    """The comparison is said first (PRD R21: the point is that we compared), then what was found."""
+    which = '最便宜的 ' if count > 1 else ''
+    return f'比过拼多多 {count} 件同款，{which}¥{pdd_yuan} 起，比这单低 ¥{cheaper_yuan}'
+
+
 def yuan(cents):
     return f'{cents / 100:.2f}'
 
@@ -145,8 +151,10 @@ async def compare(plan):
             return dict(kind='mcd_cheaper', platform='拼多多', count=count, line=f'比过拼多多 {count} 件同款，这单更便宜')
         url = await link(best['goods_sign'], found.get('search_id'), cred)
         if not url:return None
-        return dict(kind='pdd_cheaper', platform='拼多多', count=len(found['goods']), pdd_yuan=yuan(pdd), cheaper_yuan=yuan(mcd - pdd), url=url, title=best['goods_name'] or '',
-                    line=f'拼多多同款 ¥{yuan(pdd)} 起，比这单低 ¥{yuan(mcd - pdd)}，第三方代下单，非麦当劳官方：{url}')
+        count = len(found['goods'])
+        head = pdd_cheaper_head(count, yuan(pdd), yuan(mcd - pdd))
+        return dict(kind='pdd_cheaper', platform='拼多多', count=count, pdd_yuan=yuan(pdd), cheaper_yuan=yuan(mcd - pdd), url=url, title=best['goods_name'] or '',
+                    head=head, line=f'{head}，第三方代下单，非麦当劳官方：{url}')
     except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError, asyncio.TimeoutError):
         return None
 

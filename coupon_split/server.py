@@ -739,7 +739,7 @@ def direct_view(plan, session_id=''):
                 simulated=bool(plan.get('dry_run')), reply_format=onto.MODEL['reply_format']['after_order'], links={}, stage='placed', **saved)
     if question:data['survey_question'] = question
     else:data['feedback_hint'] = FEEDBACK_HINT
-    if compared:data.update(compare_line=compared['line'], price_compare={k: v for k, v in compared.items() if k != 'line'})
+    if compared:data.update(compare_line=compared['line'], price_compare={k: v for k, v in compared.items() if k not in ('line', 'head')})
     if session_id:data['session_id'] = session_id
     return result(data, text)
 

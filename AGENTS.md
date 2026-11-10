@@ -7,7 +7,7 @@
 2. 已装 uv 时运行下面命令，把 `<host>` 换为表中的名字。先预览；用户的“帮我安装”授权包含对应 MCP 注册，可核对路径后添加 `--apply`。没有安装授权时只预览。不要改模型、全局审批或其他 MCP。
 
    ```sh
-   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.6/coupon_split-0.9.6-py3-none-any.whl coupon-split setup --host <host>
+   uvx --python 3.14 --from https://github.com/kimniniup-creator/mcd-best-order/releases/download/v0.9.7/coupon_split-0.9.7-py3-none-any.whl coupon-split setup --host <host>
    ```
 
 3. 默认使用文档支持的项目配置；只提供全局配置的宿主会显示实际目标。隔离环境用 `--project <workspace> --home <isolated-home>` 或 `--config <actual-config-path>`。保留已有条目；写入前安装器会保留原文件备份。不要把 Token 写到仓库或聊天。
@@ -36,7 +36,7 @@
 
 建单后回复和付款页最前面一行是服务端给的 `savings_line`（“照原样 ¥x，这单 ¥y，省 ¥z”，买卡写含卡费），原样照抄，不自己算；低于 `COUPON_SPLIT_MIN_SAVINGS_YUAN`（默认 1 元）时没有这一行。付款链接后面原样写 `feedback_hint`；用户回 👍/👎 或说哪里不好时调用 `send_feedback(plan_id, rating, note)`，`COUPON_SPLIT_FEEDBACK_WEBHOOK` 配了飞书群机器人时同时发群。用户问用了多少次、省了多少时调用只读的 `order_stats(days)`。返回里有 `survey_question` 时（只在设置了 `COUPON_SPLIT_SURVEY_DOC_URL` 时出现，这时没有 `feedback_hint`），原样写它的 `text`；用户回答时调用 `answer_survey(question_id, choice, note)`，撤回仍走 `withdraw_order`。依据 PRD R20、`docs/specs/form-survey.md`。
 
-建单时服务端同时去拼多多（多多进宝）搜同款，付款链接后面原样写 `compare_line` 一行：这单更便宜时是“比过拼多多 N 件同款，这单更便宜”，拼多多更低时给价格、风险提示和链接。没有就不写，不自己比价。只在本机有 `PDD_CLIENT_ID`、`PDD_CLIENT_SECRET`、`PDD_PID`（环境变量或 `~/.pdd/.env`）时比，`COUPON_SPLIT_PDD_COMPARE=false` 关闭。依据 PRD R21、`docs/specs/pdd-compare.md`。
+建单时服务端同时去拼多多（多多进宝）搜同款，付款链接后面原样写 `compare_line` 一行：这单更便宜时是“比过拼多多 N 件同款，这单更便宜”，拼多多更低时是“比过拼多多 N 件同款，最便宜的 ¥x 起，比这单低 ¥y”加风险提示和链接。没有就不写，不自己比价。只在本机有 `PDD_CLIENT_ID`、`PDD_CLIENT_SECRET`、`PDD_PID`（环境变量或 `~/.pdd/.env`）时比，`COUPON_SPLIT_PDD_COMPARE=false` 关闭。依据 PRD R21、`docs/specs/pdd-compare.md`。
 
 ## 0.9.5 回复再砍短
 

@@ -63,7 +63,9 @@ def compare_block(c):
     e = html.escape
     if c['kind'] == 'mcd_cheaper':return f'<section class="compare"><p>{e(c["line"])}</p></section>'
     from coupon_split.pdd import RISK
-    return (f'<section class="compare"><p>拼多多同款 ¥{e(c["pdd_yuan"])} 起，比这单低 ¥{e(c["cheaper_yuan"])}</p>'
+    from coupon_split.pdd import pdd_cheaper_head
+    head = pdd_cheaper_head(c.get('count') or 1, c['pdd_yuan'], c['cheaper_yuan'])
+    return (f'<section class="compare"><p>{e(head)}</p>'
             f'<p class="title">{e(c.get("title") or "")}</p><p class="note">{RISK}</p>'
             f'<p><a href="{e(c["url"])}" rel="noreferrer noopener" target="_blank">去拼多多看看</a></p></section>')
 
