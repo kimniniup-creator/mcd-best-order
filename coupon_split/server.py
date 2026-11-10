@@ -1449,6 +1449,13 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     if previous.get('store_code'):e['sources']['store_code']=active['elements'].get('sources',{}).get('store_code','default') if continuing else 'last'
     if incoming.get('fulfillment') and incoming['fulfillment']!=previous.get('elements',{}).get('fulfillment'):
         previous.pop('store_code',None)
+    # PRD F14: pickup / drive with no place said reuses the store of the last real order of the same kind, across conversations;
+    # saying a place or a landmark later replaces it.
+    way=e.get('fulfillment')
+    if (way in ('pickup','drive') and not previous.get('store_code') and not inferred.get('location') and not (continuing and active.get('location'))
+            and last_order.get('store_code') and last_order.get('elements',{}).get('fulfillment')==way):
+        previous['store_code']=last_order['store_code']
+        e['sources']['store_code']='last'
     # The host resolves references, negation and typos from context; keywords are the fallback.
     food_text='、'.join(f.strip() for f in (foods or []) if f and f.strip())
     if food_text:
@@ -1529,7 +1536,7 @@ async def mcd_start(utterance: Annotated[str, Field(description='逐字复制本
     reused=[]
     if e.get('sources',{}).get('fulfillment')=='last':reused.append(labels.get(e.get('fulfillment'),'')+'（沿用上次）')
     store=get_store_context(t,cart['store_code']) if cart['store_code'] else {}
-    if store:reused.append(store.get('storeName','所选门店')+'（'+('最近' if e['sources'].get('store_code')=='nearest' else '沿用上次' if not continuing else '默认')+'）')
+    if store:reused.append(store.get('storeName','所选门店')+'（'+('最近' if e['sources'].get('store_code')=='nearest' else '沿用上次' if not continuing or e['sources'].get('store_code')=='last' else '默认')+'）')
     if e.get('sources',{}).get('addressId')=='last':reused.append('上次配送地址（沿用上次）')
     prefix='、'.join(reused)+('，现在送。' if e.get('fulfillment')=='delivery' else '，现在取。') if reused else ''
     if incoming.get('reservationDate'):
